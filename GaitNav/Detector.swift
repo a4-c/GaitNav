@@ -70,8 +70,8 @@ class Detector {
         request.imageCropAndScaleOption = .scaleFill
         
         // 创建图片处理器，把摄像头画面和请求绑在一起
-        // orientation: .up 表示图片是正向的
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up)
+        // orientation: .right，因为手机是竖着的
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right)
         // 执行请求，try? 表示如果出错就静默忽略
         try? handler.perform([request])
     }
