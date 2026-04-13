@@ -16,12 +16,17 @@ struct ContentView: View {
                 // 忽略安全区域，让画面延伸到刘海和底部
                 .ignoresSafeArea()
             
+            // 中层：检测框叠加层
+            // camera.detections 变化时，这个视图会自动重绘
+            DetectionOverlay(detections: camera.detections)
+                .ignoresSafeArea()
+            
             // 上层：文字标签
             // VStack 是垂直排列布局
             VStack {
                 // 弹性空间，把下面的内容推到底部
                 Spacer()
-                Text("GaitNav Camera Preview")
+                Text("\(camera.detections.count) objects detected")
                     // 标题字体
                     .font(.headline)
                     // 白色文字
