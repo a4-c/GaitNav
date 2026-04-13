@@ -22,6 +22,14 @@ class CameraManager: NSObject, ObservableObject {
     // 标记当前是否正在处理一帧，避免堆积
     private var isProcessing = false
     
+    // @Published：值变化时自动通知 SwiftUI 刷新界面，这样 ContentView 里的 FPS 显示会实时更新
+    @Published var fps: Double = 0
+    // 计数器：记录从上次统计到现在已经处理了多少帧
+    private var frameCount = 0
+    // 时间戳：记录上次更新 FPS 的时刻，用来计算时间间隔
+    // Date() 表示"现在这一刻"
+    private var lastFPSUpdate = Date()
+    
     // 构造函数，对象被创建时自动执行
     override init() {
         super.init()
@@ -96,10 +104,22 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         detector.detect(pixelBuffer: pixelBuffer) { [weak self] detections in
             // 回到主线程更新 UI（SwiftUI 要求在主线程更新界面）
             DispatchQueue.main.async {
+                // 把可选的 self 安全解包，避免后面每次都写 self?.
+                guard let self = self else { return }
                 // 更新检测结果
-                self?.detections = detections
+                self.detections = detections
                 // 标记为处理完毕，可以接收下一帧
-                self?.isProcessing = false
+                self.isProcessing = false
+                
+                // FPS 计算
+                self.frameCount += 1
+                let now = Date()
+                let elapsed = now.timeIntervalSince(self.lastFPSUpdate)
+                if elapsed >= 1.0 {
+                    self.fps = Double(self.frameCount) / elapsed
+                    self.frameCount = 0
+                    self.lastFPSUpdate = now
+                }
             }
         }
     }

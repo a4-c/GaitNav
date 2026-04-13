@@ -26,7 +26,7 @@ struct ContentView: View {
             VStack {
                 // 弹性空间，把下面的内容推到底部
                 Spacer()
-                Text("\(camera.detections.count) objects detected")
+                Text("\(camera.detections.count) objects detected. \(String(format: "%.1f", camera.fps)) FPS")
                     // 标题字体
                     .font(.headline)
                     // 白色文字
