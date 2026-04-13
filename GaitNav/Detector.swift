@@ -20,7 +20,7 @@ class Detector {
             
             // yolov8n 是 Xcode 根据导入的 .mlpackage 自动生成的类
             // 名字就是你的模型文件名，首字母小写
-            let coreMLModel = try yolov8n(configuration: config).model
+            let coreMLModel = try yolov8s(configuration: config).model
             
             // 把 CoreML 模型包装成 Vision 能用的格式
             vnModel = try VNCoreMLModel(for: coreMLModel)
