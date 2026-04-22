@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import ARKit
+import RealityKit
 
 // UIViewRepresentable 是一个协议（接口）
 // 作用：把传统的 UIKit 视图包装成 SwiftUI 能用的组件
@@ -61,27 +62,22 @@ struct CameraPreview: UIViewRepresentable {
 
     // makeUIView 是 UIViewRepresentable 要求实现的方法
     // 系统会调用它来创建实际的视图，只调用一次
-    func makeUIView(context: Context) -> ARSCNView {
+    func makeUIView(context: Context) -> ARView {
         
-        // ARSCNView 是 ARKit 提供的专用视图
+        // ARView 是 RealityKit 提供的专用视图
         // 它自动把摄像头画面显示出来，不需要手动处理预览层
         // 之前用 AVCaptureVideoPreviewLayer 手动搞了很多旋转方向的问题
-        // ARSCNView 全部自动处理，省掉了那些麻烦
-        let view = ARSCNView()
+        // ARView 全部自动处理，省掉了那些麻烦
+        let view = ARView(frame: .zero)
         
         // 把我们的 ARSession 绑定到这个视图上
         // 视图就知道从哪里拿画面数据了
         view.session = session
-        
-        // 关闭自动光照估计
-        // ARKit 默认会根据环境光调整 3D 渲染的光照效果
-        // 我们不做 3D 渲染，所以关掉它省点性能
-        view.automaticallyUpdatesLighting = false
         
         return view
     }
 
     // 视图更新时调用，我们这里不需要做任何事
     // ARSCNView 自己会自动跟着 ARSession 更新画面
-    func updateUIView(_ uiView: ARSCNView, context: Context) {}
+    func updateUIView(_ uiView: ARView, context: Context) {}
 }
