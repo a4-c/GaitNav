@@ -161,19 +161,20 @@ extension CameraManager: ARSessionDelegate {
         //
         // 深度图的坐标系：
         //   - 是横屏空间（和摄像头原始数据一致）
+        //   - y 从上到下
         //   - 宽 256，高 192
         //
         // 竖屏转横屏的对应关系：
-        //   竖屏的 x 方向 → 对应横屏的 y 方向
+        //   竖屏的 x 方向 → 对应横屏的 y 方向（翻转）
         //   竖屏的 y 方向 → 对应横屏的 x 方向（翻转）
         //
         // 所以：
-        //   深度图的 x = boundingBox.midY * depthWidth
-        //   深度图的 y = boundingBox.midX * depthHeight
+        //   深度图的 x = (1 - boundingBox.midY) * depthWidth
+        //   深度图的 y = (1 - boundingBox.midX) * depthHeight
         //
         // 按照这个映射，取物体中心点
-        let centerX = Int(boundingBox.midY * CGFloat(depthWidth))
-        let centerY = Int(boundingBox.midX * CGFloat(depthHeight))
+        let centerX = Int((1 - boundingBox.midY) * CGFloat(depthWidth))
+        let centerY = Int((1 - boundingBox.midX) * CGFloat(depthHeight))
 
         // 在中心点周围取一个 5x5 的采样区域（半径为 2）
         // 为什么不只读一个点？
