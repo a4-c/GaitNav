@@ -9,8 +9,10 @@ struct DetectionOverlay: View {
         // GeometryReader 能获取父视图的实际尺寸
         // 我们需要它来把模型输出的归一化坐标转成屏幕像素坐标
         GeometryReader { geometry in
+            
             // 遍历每个检测结果
             ForEach(detections) { detection in
+                
                 // 把模型的坐标转成屏幕坐标
                 let rect = convertRect(detection.boundingBox, in: geometry.size)
                 
@@ -23,8 +25,8 @@ struct DetectionOverlay: View {
                     // 框的位置（中心点）
                     .position(x: rect.midX, y: rect.midY)
                 
-                // 在框上方显示标签和置信度
-                Text("\(detection.label) \(Int(detection.confidence * 100))%")
+                // 在框上方显示物体标签（名称 + 置信度 + 距离）
+                Text(labelText(for: detection))
                     // 小字体
                     .font(.caption)
                     // 黑色文字
@@ -43,8 +45,8 @@ struct DetectionOverlay: View {
     
     // 坐标转换函数
     // Vision 框架返回的坐标是"归一化"的：x 和 y 都在 0 到 1 之间
-    // 而且 y 轴是从底部往上的（和屏幕相反）
-    // 这个函数把它转成屏幕上的实际像素坐标
+    // 而且 Vision 的 y 轴从底部向上，屏幕的 y 轴从顶部向下，所以要翻转
+    // 这个函数把它转成屏幕上的实际像素坐标（把 0-1 的比例值乘以屏幕宽度，得到像素值）
     private func convertRect(_ boundingBox: CGRect, in size: CGSize) -> CGRect {
         // x 起点
         let x = boundingBox.minX * size.width
@@ -55,5 +57,19 @@ struct DetectionOverlay: View {
         // 高度
         let height = boundingBox.height * size.height
         return CGRect(x: x, y: y, width: width, height: height)
+    }
+    
+    // 生成标签文字
+    private func labelText(for detection: Detection) -> String {
+        // 先拼基础信息：物体名 + 置信度百分比
+        var text = "\(detection.label) \(Int(detection.confidence * 100))%"
+
+        // 如果有距离信息，追加距离
+        // if let 是安全解包：如果 distance 不是 nil，就取出值赋给 d
+        if let d = detection.distance {
+            // %.1f 保留一位小数，比如 2.3
+            text += " · \(String(format: "%.1f", d))m"
+        }
+        return text
     }
 }

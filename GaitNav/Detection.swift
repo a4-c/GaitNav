@@ -14,4 +14,10 @@ struct Detection: Identifiable {
     
     // 物体在画面中的矩形区域（x, y, 宽, 高）
     let boundingBox: CGRect
+    
+    // 物体到摄像头的距离，单位是米
+    // 用 var 而不是 let，因为我们先创建检测结果，之后再补上距离
+    // Optional 类型（Float?），因为有时候深度数据可能无效或不可用
+    // nil 表示"没有距离信息"
+    var distance: Float? = nil
 }
