@@ -172,8 +172,9 @@ extension CameraManager: ARSessionDelegate {
         //   深度图的 x = (1 - boundingBox.midY) * depthWidth
         //   深度图的 y = (1 - boundingBox.midX) * depthHeight
         //
-        // 按照这个映射，取物体中心点
-        let centerX = Int((1 - boundingBox.midY) * CGFloat(depthWidth))
+        // 按照这个映射，取检测框接近底部的地方
+        let sampleY = boundingBox.minY + 0.05 * boundingBox.height
+        let centerX = Int((1 - sampleY) * CGFloat(depthWidth))
         let centerY = Int((1 - boundingBox.midX) * CGFloat(depthHeight))
 
         // 在中心点周围取一个 5x5 的采样区域（半径为 2）
