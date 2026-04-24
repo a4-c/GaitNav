@@ -15,8 +15,6 @@ class CameraManager: NSObject, ObservableObject {
     // @Published 表示这个属性变化时，SwiftUI 界面会自动刷新
     // 每次检测完成，新的结果会写入这里，界面上的框就会更新
     @Published var detections: [Detection] = []
-    // @Published：值变化时自动通知 SwiftUI 刷新界面，这样 ContentView 里的 FPS 显示会实时更新
-    @Published var fps: Double = 0
     
     // 创建检测器实例
     private let detector = Detector()
@@ -24,11 +22,32 @@ class CameraManager: NSObject, ObservableObject {
     // 标记当前是否正在处理一帧，避免堆积
     private var isProcessing = false
     
+    // @Published：值变化时自动通知 SwiftUI 刷新界面，这样 ContentView 里的 FPS 显示会实时更新
+    @Published var fps: Double = 0
+    
     // 计数器：记录从上次统计到现在已经处理了多少帧
     private var frameCount = 0
     // 时间戳：记录上次更新 FPS 的时刻，用来计算时间间隔
     // Date() 表示"现在这一刻"
     private var lastFPSUpdate = Date()
+    
+    // 当前正在追踪的所有物体
+    private var trackedObjects: [TrackedObject] = []
+    
+    // IoU 阈值：两个框的重叠度超过这个值，才认为是同一个物体
+    // IoU = 交集面积 / 并集面积，范围 0~1
+    // 0.3 比较宽松，适合物体在帧间有较大移动的情况
+    private let iouThreshold: CGFloat = 0.3
+    // 物体连续消失超过这么多帧就移除
+    private let maxMissedFrames = 3
+    // 物体至少要存在这么多帧才会显示（防止误检一闪而过）
+    private let minAgeToShow = 2
+    // 标签历史最多保留多少条记录（太多会导致标签切换反应慢）
+    private let maxLabelHistory = 10
+    // 距离历史最多保留多少帧（用于中位数滤波）
+    // 3 帧 = 只滞后 1 帧就能跟上真实距离变化，同时过滤单帧噪声
+    // 增大可以更抗噪但滞后更多，减小反应更快但过滤效果更弱
+    private let maxDistanceHistory = 3
     
     // 构造函数，对象创建时自动执行
     override init() {
@@ -125,7 +144,6 @@ extension CameraManager: ARSessionDelegate {
             guard let self = self else { return }
             
             // detections 是 YOLO 返回的检测结果，目前还没有距离信息
-            // 接下来我们要给每个检测结果补上距离
             var results = detections
             
             // 只有在深度图存在的情况下才尝试读取距离
@@ -133,9 +151,10 @@ extension CameraManager: ARSessionDelegate {
                 for i in results.indices {
                     // 调用 getDepth 方法：
                     // 采样深度 → 反投影到3D空间 → 转换到世界坐标 → 算水平距离
-                    results[i].distance = self.getDepth(
-                        for: results[i].boundingBox,
-                        from: depthMap,
+                    // 给检测结果补上距离
+                    results[i].distance = self.getDistance(
+                        boundingBox: results[i].boundingBox,
+                        depthMap: depthMap,
                         confidenceMap: confidenceMap,
                         intrinsics: intrinsics,
                         cameraTransform: cameraTransform,
@@ -147,8 +166,26 @@ extension CameraManager: ARSessionDelegate {
             
             // 回到主线程更新 UI（SwiftUI 要求在主线程更新界面）
             DispatchQueue.main.async {
-                // 更新检测结果
-                self.detections = results
+                // 用追踪系统处理这一帧的检测结果：
+                //   匹配到已有物体 → 更新位置、平滑距离、记录标签
+                //   没匹配到的新物体 → 开始追踪
+                //   连续消失的旧物体 → 移除
+                self.updateTracking(with: results)
+                
+                // 把追踪结果转换成 Detection 数组给界面显示
+                // 只输出 age >= minAgeToShow 的物体（新出现的前几帧不显示，防止闪烁）
+                self.detections = self.trackedObjects
+                    .filter { $0.age >= self.minAgeToShow }
+                    .map { tracked in
+                        Detection(
+                            id: tracked.id,
+                            label: tracked.stableLabel,
+                            confidence: tracked.confidence,
+                            boundingBox: tracked.boundingBox,
+                            distance: tracked.stableDistance
+                        )
+                    }
+                
                 // 标记为处理完毕，可以接收下一帧
                 self.isProcessing = false
                 
@@ -184,9 +221,9 @@ extension CameraManager: ARSessionDelegate {
     //
     // 返回值：
     //   水平距离（米），如果无法获取则返回 nil
-    private func getDepth(
-        for boundingBox: CGRect,
-        from depthMap: CVPixelBuffer,
+    private func getDistance(
+        boundingBox: CGRect,
+        depthMap: CVPixelBuffer,
         confidenceMap: CVPixelBuffer?,
         intrinsics: simd_float3x3,
         cameraTransform: simd_float4x4,
@@ -346,8 +383,7 @@ extension CameraManager: ARSessionDelegate {
         // ===================================================================
         
         // 对采样区域里的每一个像素，我们要做：
-        //   检查置信度 → 读取深度 → 过滤无效值
-        //   → 反投影到相机 3D 坐标 → 转换到世界坐标 → 算水平距离
+        //   检查置信度 → 读取深度 → 过滤无效值 → 反投影到相机 3D 坐标 → 转换到世界坐标 → 算水平距离
         //
         // py 遍历深度图的行（y 方向），px 遍历列（x 方向）
         for py in depthYStart...depthYEnd {
@@ -460,5 +496,156 @@ extension CameraManager: ARSessionDelegate {
         // 即使有几个像素采到了背景（距离突然变大），中位数也不会被拉偏
         horizontalDistances.sort()
         return horizontalDistances[horizontalDistances.count / 2]
+    }
+    
+    // 物体追踪：匹配、更新、清理
+    //
+    // 这个方法每帧调用一次，负责把 YOLO 的检测结果和已有的追踪物体对应起来
+    //
+    // 核心逻辑：
+    //   1. 对每个新检测结果，找到和它重叠最多的已有追踪物体（IoU 最大）
+    //   2. 如果 IoU > 阈值 → 匹配成功，更新那个追踪物体的信息
+    //   3. 如果找不到匹配 → 这是一个新出现的物体，创建新的追踪记录
+    //   4. 没被任何新检测匹配到的旧追踪物体 → 标记为"消失了一帧"
+    //   5. 连续消失太多帧的 → 彻底移除
+    private func updateTracking(with detections: [Detection]) {
+        
+        // 记录哪些已有追踪物体在这一帧被匹配到了
+        // 用 Set<UUID> 存储被匹配到的追踪物体的 ID
+        var matchedTrackedIDs = Set<UUID>()
+        // 记录哪些新检测结果被匹配到了（用索引表示）
+        var matchedDetectionIndices = Set<Int>()
+        
+        // ===================================================================
+        // 第一步：为每个新检测结果寻找最佳匹配
+        // ===================================================================
+        
+        // 双重循环：外层遍历新检测，内层遍历已有追踪物体
+        // 对每个新检测，找到 IoU 最大的那个追踪物体
+        for (detIndex, detection) in detections.enumerated() {
+            var bestIoU: CGFloat = 0
+            var bestTrackedIndex: Int? = nil
+            
+            for (trackedIndex, tracked) in trackedObjects.enumerated() {
+                // 跳过已经被其他检测匹配走的追踪物体（一对一匹配）
+                if matchedTrackedIDs.contains(tracked.id) { continue }
+                
+                let overlap = iou(detection.boundingBox, tracked.boundingBox)
+                if overlap > bestIoU {
+                    bestIoU = overlap
+                    bestTrackedIndex = trackedIndex
+                }
+            }
+            
+            // ===================================================================
+            // 第二步：判断是否匹配成功
+            // ===================================================================
+            
+            if bestIoU > iouThreshold, let idx = bestTrackedIndex {
+                // 匹配成功，更新这个追踪物体的信息
+                
+                matchedTrackedIDs.insert(trackedObjects[idx].id)
+                matchedDetectionIndices.insert(detIndex)
+                
+                // 更新边界框为最新位置
+                trackedObjects[idx].boundingBox = detection.boundingBox
+                // 更新置信度
+                trackedObjects[idx].confidence = detection.confidence
+                // 重置消失计数（因为这帧又看到它了）
+                trackedObjects[idx].missedFrames = 0
+                // 年龄 +1
+                trackedObjects[idx].age += 1
+                
+                // 记录这帧的标签到历史中
+                trackedObjects[idx].labelHistory.append(detection.label)
+                // 如果历史太长，删掉最早的记录，只保留最近的
+                if trackedObjects[idx].labelHistory.count > maxLabelHistory {
+                    trackedObjects[idx].labelHistory.removeFirst()
+                }
+                
+                // 记录距离到历史数组（用于中位数滤波）
+                if let newDist = detection.distance {
+                    trackedObjects[idx].distanceHistory.append(newDist)
+                    // 如果历史太长，删掉最早的，只保留最近几帧
+                    if trackedObjects[idx].distanceHistory.count > maxDistanceHistory {
+                        trackedObjects[idx].distanceHistory.removeFirst()
+                    }
+                }
+                // 如果这帧没有距离数据（newDist 为 nil），保留现有历史不变
+            }
+        }
+        
+        // ===================================================================
+        // 第三步：处理没被匹配到的新检测（新出现的物体）
+        // ===================================================================
+        
+        for (detIndex, detection) in detections.enumerated() {
+            if matchedDetectionIndices.contains(detIndex) { continue }
+            
+            // 创建一个新的追踪记录
+            // 如果第一帧就有距离数据，放进历史数组；没有就先空着
+            let initialHistory: [Float] = detection.distance.map { [$0] } ?? []
+            trackedObjects.append(TrackedObject(
+                id: UUID(),
+                boundingBox: detection.boundingBox,
+                labelHistory: [detection.label],
+                confidence: detection.confidence,
+                distanceHistory: initialHistory,
+                missedFrames: 0,
+                // 刚出现，第 1 帧
+                age: 1
+            ))
+        }
+        
+        // ===================================================================
+        // 第四步：处理没被匹配到的旧追踪物体（可能离开了画面）
+        // ===================================================================
+        
+        for i in trackedObjects.indices {
+            if !matchedTrackedIDs.contains(trackedObjects[i].id) {
+                // 这个物体这帧没有对应的新检测，消失帧数 +1
+                trackedObjects[i].missedFrames += 1
+            }
+        }
+        
+        // ===================================================================
+        // 第五步：移除消失太久的物体
+        // ===================================================================
+        
+        // removeAll(where:) 会删掉所有满足条件的元素
+        trackedObjects.removeAll { $0.missedFrames > maxMissedFrames }
+    }
+    
+    // 计算两个矩形的 IoU（Intersection over Union，交并比）
+    //
+    // IoU 是衡量两个框重叠程度的标准指标，范围 0~1：
+    //   0 = 完全不重叠
+    //   1 = 完全重合
+    //   通常 > 0.3 就认为是同一个物体
+    //
+    // 计算方法：
+    //   IoU = 交集面积 / 并集面积
+    //   并集面积 = A面积 + B面积 - 交集面积（减掉重复算的部分）
+    //
+    // 示意图：
+    //   ┌──────┐
+    //   │  A   │
+    //   │   ┌──┼───┐
+    //   └───┼──┘   │
+    //       │  B   │
+    //       └──────┘
+    //   中间重叠的部分 = 交集
+    private func iou(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        // .intersection() 返回两个矩形的重叠区域
+        let intersection = a.intersection(b)
+        // .isNull 表示没有重叠（两个框完全分开）
+        if intersection.isNull { return 0 }
+        // 交集面积
+        let intersectionArea = intersection.width * intersection.height
+        // 并集面积 = A + B - 交集（因为交集被 A 和 B 各算了一次，要减掉一次）
+        let unionArea = a.width * a.height + b.width * b.height - intersectionArea
+        // 避免除以零（理论上不会，但以防万一）
+        guard unionArea > 0 else { return 0 }
+        return intersectionArea / unionArea
     }
 }
