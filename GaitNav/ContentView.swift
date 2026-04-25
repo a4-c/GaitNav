@@ -26,7 +26,7 @@ struct ContentView: View {
             
             // 中层：检测框叠加层
             // camera.detections 变化时，这个视图会自动重绘
-            DetectionOverlay(detections: camera.detections)
+            DetectionOverlay(detections: camera.detections, calibrator: calibrator)
                 .ignoresSafeArea()
             
             // 上层：UI控件

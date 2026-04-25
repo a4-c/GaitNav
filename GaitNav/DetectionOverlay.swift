@@ -5,6 +5,9 @@ struct DetectionOverlay: View {
     
     let detections: [Detection]
     
+    // 用来把检测到的距离转换成步数
+    let calibrator: Calibrator
+    
     var body: some View {
         // GeometryReader 能获取父视图的实际尺寸
         // 我们需要它来把模型输出的归一化坐标转成屏幕像素坐标
@@ -69,6 +72,10 @@ struct DetectionOverlay: View {
         if let d = detection.distance {
             // %.1f 保留一位小数，比如 2.3
             text += " · \(String(format: "%.1f", d))m"
+            
+            // 把距离转成步数，显示在距离后面
+            let steps = calibrator.distanceToSteps(d)
+            text += " / \(steps) steps"
         }
         return text
     }
