@@ -3,279 +3,357 @@ import ARKit
 import Combine
 
 // 步长标定器：
-//   1. 引导用户走一段路，利用 CMPedometer 计步 + ARKit 测距
-//   2. 计算个人步长 = 距离 / 步数
-//   3. 把结果存入 UserDefaults，下次打开 app 直接加载
-//   4. 提供 distanceToSteps() 方法，供其他模块把米转成步数
+//   让用户走一段路，系统自动测量用户每一步有多长
+//   测出来的步长用于后续把"障碍物距离2.1米"转换成"还有3步"
+//
+// 整体流程：
+//   1. 用户点 Start → 记录手机当前位置（ARKit）+ 开始数步数（加速度计）
+//   2. 用户直线走路 → 每走一步，加速度计检测到波峰，步数 +1
+//   3. 用户点 Stop → 记录手机终点位置 → 算出走了多远
+//   4. 步长 = 总距离 / 总步数 → 存入本地存储
 class Calibrator: ObservableObject {
     
-    // CMPedometer：Apple 提供的计步器
-    // 步数非常准确，但有几秒的延迟（攒一批再推送）
-    // 对标定来说延迟无所谓，我们只需要"走完之后的总步数"
-    private let pedometer = CMPedometer()
+    // CMMotionManager：运动传感器管理器
+    // 它是我们访问加速度计的入口
+    private let motionManager = CMMotionManager()
     
-    // ARSession 的引用，从 CameraManager 传进来
-    // 用来在标定开始和结束时读取手机在 3D 空间中的位置
-    // weak 防止循环引用（PedometerManager 不拥有 ARSession）
+    // ARSession 的引用，从 CameraManager 传过来
     weak var arSession: ARSession?
     
-    // 标定完成后计算出的步长（米）
-    // nil = 还没标定过，或者标定失败了
-    // 有值 = 标定成功，比如 0.68 表示一步走 0.68 米
+    // 标定完成后计算出的步长，单位：米
     @Published var calibratedStepLength: Float? = nil
     
     // 当前是否正在标定
-    // true = 用户已经点了"开始"，正在走路中
-    // false = 还没开始，或者已经结束
     @Published var isCalibrating: Bool = false
     
     // 标定过程中的累计步数
-    // 标定开始时重置为 0，走的过程中实时增加
     @Published var calibrationSteps: Int = 0
     
-    // 标定时走过的总距离（米）
+    // 标定时走过的总距离，单位：米
     @Published var calibrationDistance: Float? = nil
     
-    // 状态提示信息，显示在界面上指导用户
-    // 不同阶段会显示不同的文字
+    // 状态提示信息，不同阶段显示不同的内容，引导用户操作
     @Published var statusMessage: String = ""
     
     // 标定开始时手机在 ARKit 世界坐标系中的位置
-    //
-    // SIMD3<Float> 是一个三维向量 (x, y, z)：
-    //   x = 左右方向的位置
-    //   y = 上下方向的位置（垂直高度）
-    //   z = 前后方向的位置
-    //
-    // 工作流程：
-    //   用户点"开始" → 记录当前位置到 startPosition
-    //   用户走路...
-    //   用户点"结束" → 再取一次当前位置
-    //   两个位置之间的水平距离 = 走过的总距离
-    //
-    // Optional 因为标定还没开始时没有起点
     private var startPosition: SIMD3<Float>? = nil
     
-    // UserDefaults 是 iOS 提供的轻量级持久化存储
-    // 数据以 key-value（键值对）的形式存在磁盘上
-    // app 关掉再打开，数据还在
-    //
-    // 基本用法：
-    //   存：UserDefaults.standard.set(0.68, forKey: "myKey")
-    //   取：UserDefaults.standard.float(forKey: "myKey")
-    //   删：UserDefaults.standard.removeObject(forKey: "myKey")
+    // 每次新数据到来时，用当前值和这个值比较：
+    //   当前值 > lastAcceleration → 加速度在增大，正在往波峰走
+    //   当前值 < lastAcceleration → 加速度在减小，正在往波谷走
+    //   当前值 == lastAcceleration → 平稳（实际很少发生）
+    private var lastAcceleration: Double = 0
+    
+    // 当前加速度是否处于上升趋势
+    // 这个标志用来判断"波峰"：
+    //   波峰的定义 = 值先上升（isRising = true），然后开始下降
+    //   所以当 isRising == true 且当前值 < 上一次的值时 → 刚过了一个波峰
+    // 初始值 false：
+    //   第一次采样前不认为在上升，需要看到至少一次"值变大"才开始
+    private var isRising = false
+    
+    // 波峰检测阈值
+    // 只有合加速度超过这个值的波峰才算"走了一步"
+    // 低于这个值的波峰被认为是噪声（手抖、呼吸等微小振动）
+    private let stepThreshold: Double = 1.1
+    
+    // 上一次成功检测到步伐的时间
+    // 用于防抖机制
+    // .distantPast 代表一个极其遥远的过去时间
+    //   这样第一步检测时：
+    //     now.timeIntervalSince(.distantPast) = 一个巨大的正数
+    //     肯定 > 0.3 秒
+    //     所以第一步不会被误拦
+    private var lastStepTime: Date = .distantPast
+    
+    // 两步之间的最短时间间隔（秒）
+    // 这是防抖机制的参数
+    // 如果两个波峰之间的间隔 < 0.3 秒，第二个波峰会被忽略
+    private let minStepInterval: TimeInterval = 0.3
+    
+    // UserDefaults 的 key
     private let stepLengthKey = "calibratedStepLength"
     
-    // 默认步长：0.65米（成年人平均单步步长的保守估计）
-    // 如果用户还没做过标定，就用这个值来换算步数
+    // 默认步长，单位：米
+    // 当用户还没做过标定时，用这个值来换算步数
+    // 这样即使第一次打开 app，看到障碍物也能显示"大约几步"
     private let defaultStepLength: Float = 0.65
     
     init() {
-        // 尝试从 UserDefaults 读取之前标定过的步长
-        // float(forKey:) 的行为：
-        //   如果这个 key 存在且值是数字 → 返回那个数字
-        //   如果这个 key 不存在（从没标定过）→ 返回 0.0（Float 的默认值）
-        // 所以用 > 0 来判断是否标定过
+        // 尝试从 UserDefaults 读取之前保存的标定结果
+        // .float(forKey:)：
+        //   如果 key 存在且值可以转成 Float → 返回那个 Float 值
+        //   如果 key 不存在 → 返回 0.0（Float 的默认"零值"）
+        //   如果 key 存在但值不是数字 → 返回 0.0
         let saved = UserDefaults.standard.float(forKey: stepLengthKey)
         if saved > 0 {
+            // 之前标定过，加载保存的步长
             calibratedStepLength = saved
+            // 在界面上显示已保存的步长值
             statusMessage = "Saved step length: \(String(format: "%.2f", saved))m"
         } else {
+            // 从没标定过，提示用户当前使用默认值
             statusMessage = "Not calibrated. Using default: \(defaultStepLength)m"
         }
     }
     
-    // 这是外部模块应该调用的属性（调用方不需要关心"有没有标定过"，直接用这个值就行）
-    // 优先返回标定过的值，没标定过就返回默认值
+    // 每次访问时实时计算，不存储值
+    // 外部模块（比如将来的距离→步数转换）不需要关心用户有没有标定过
+    // 它们只需要调用 calibrator.effectiveStepLength，总能拿到一个合理的值
     var effectiveStepLength: Float {
         calibratedStepLength ?? defaultStepLength
     }
     
-    // 用户点击"Start"按钮时调用
+    // 用户点击 CalibrationView 上的 "Start" 按钮时调用
     func startCalibration() {
         
-        // ===================================================================
+        // =============================================================
         // 第一步：记录起点位置
-        // ===================================================================
+        // =============================================================
         
-        // 从 ARSession 拿到最新一帧数据
-        // currentFrame 是 ARSession 的属性，随时可以读取
-        // 不像 session(_:didUpdate:) 那样需要等回调
+        // .currentFrame → ARSession 的属性
+        // 返回 ARKit 最新处理好的一帧数据（ARFrame 类型）
         guard let frame = arSession?.currentFrame else {
             statusMessage = "ARKit not ready. Please wait."
             return
         }
         
-        // 从 ARFrame 的 camera.transform 中提取手机位置
-        // camera.transform 是一个 4×4 矩阵（simd_float4x4）
-        // 它描述了"相机在世界中的位置和朝向"
-        // columns.3 是 SIMD4<Float> 类型，包含 (x, y, z, w)
-        // x, y, z = 世界坐标位置
-        // w = 齐次坐标分量，永远是 1.0，可以忽略
+        // 从 ARFrame 提取手机在世界坐标系中的位置
+        // frame.camera.transform 是一个 4×4 矩阵（simd_float4x4 类型）
+        // columns.3 描述相机的位置（平移向量）→ 告诉你相机在世界中的 (x, y, z) 位置
+        // columns.3 的类型是 SIMD4<Float>，包含 (x, y, z, w)
+        // w 是齐次坐标的分量，在变换矩阵里始终为 1.0，我们不用它
         let pos = frame.camera.transform.columns.3
+        
+        // 把 SIMD4 转成 SIMD3（丢掉 w 分量，只保留 x, y, z）
         startPosition = SIMD3<Float>(pos.x, pos.y, pos.z)
         
-        // ===================================================================
-        // 第二步：重置状态
-        // ===================================================================
+        // =============================================================
+        // 第二步：重置所有状态
+        // =============================================================
         
+        // 步数归零
         calibrationSteps = 0
+        // 清除上一次的标定距离
         calibrationDistance = nil
+        // 清除上一次的标定步长
+        // 这样 CalibrationView 的结果区域会隐藏
         calibratedStepLength = nil
+        // 标记为正在标定
         isCalibrating = true
+        // 更新状态提示
         statusMessage = "Walk now..."
         
-        // ===================================================================
-        // 第三步：启动 CMPedometer
-        // ===================================================================
+        // 重置波峰检测的内部状态
+        lastAcceleration = 0
+        isRising = false
+        lastStepTime = .distantPast
         
-        // 先检查设备是否支持计步
-        guard CMPedometer.isStepCountingAvailable() else {
-            statusMessage = "Step counting not available."
+        // =============================================================
+        // 第三步：启动加速度计
+        // =============================================================
+        
+        // 检查设备是否有加速度计
+        guard motionManager.isAccelerometerAvailable else {
+            statusMessage = "Accelerometer not available."
             isCalibrating = false
             return
         }
         
-        // 开始计步
-        // from: Date() → 从"现在"开始计，之前走的不算
-        // handler 回调在后台线程执行
-        //   data.numberOfSteps 是从 from 到现在的累计步数
-        //   每次系统更新步数（大约每几秒），这个回调就会被触发
-        //   不是每走一步就触发，而是攒几步一起推送
-        pedometer.startUpdates(from: Date()) { [weak self] data, error in
+        // 设置采样间隔：每次读取加速度数据的时间间隔
+        // 1.0 / 20.0 = 0.05 秒 = 50 毫秒
+        // 也就是每秒采样 20 次（20Hz）
+        motionManager.accelerometerUpdateInterval = 1.0 / 20.0
+        
+        // 开始接收加速度计数据，直到调用 stopAccelerometerUpdates() 为止
+        // to: .main：指定回调在主线程执行
+        // withHandler: { data, error in ... }：
+        //   这个闭包每 0.05 秒被调用一次
+        //   data：CMAccelerometerData 类型，包含本次采样的加速度值
+        //     data.acceleration.x / .y / .z 分别是三个方向的加速度（单位是 g）
+        //   error：如果出错，这里不是 nil
+        motionManager.startAccelerometerUpdates(to: .main) { [weak self] data, error in
             
-            guard let self = self, let data = data, error == nil else { return }
+            guard let self = self, let data = data else { return }
             
-            // 切回主线程更新 @Published 属性
-            // SwiftUI 要求所有 UI 相关的数据修改都在主线程进行
-            DispatchQueue.main.async {
-                self.calibrationSteps = data.numberOfSteps.intValue
-                self.statusMessage = "\(self.calibrationSteps) steps..."
+            // 计算合加速度（magnitude）
+            // 它表示三个方向加速度的总和
+            // 不管手机怎么放，合加速度都只反映"总加速度的大小"
+            // 静止时始终 ≈ 1.0（因为重力），走路时 > 1.0
+            // 阈值只需要设一个，适用于所有姿势
+            let x = data.acceleration.x
+            let y = data.acceleration.y
+            let z = data.acceleration.z
+            let magnitude = sqrt(x * x + y * y + z * z)
+            
+            // 波峰检测算法
+            if magnitude > self.lastAcceleration {
+                
+                // 当前值比上一次大 → 加速度在增大 → 标记为上升趋势
+                self.isRising = true
+                
+            } else if self.isRising {
+                
+                // 当前值 ≤ 上一次 且 之前在上升 → 转折点 → 波峰
+                // 此时 lastAcceleration 就是波峰的值
+                // 先把 isRising 重置为 false
+                self.isRising = false
+                
+                // 检查条件1：波峰够大吗？
+                if self.lastAcceleration > self.stepThreshold {
+                    
+                    // 检查条件2：距上一步时间够长吗？（防抖）
+                    let now = Date()
+                    if now.timeIntervalSince(self.lastStepTime) > self.minStepInterval {
+                        
+                        // 两个条件都满足 → 确认这是真的一步
+                        // 步数 +1
+                        self.calibrationSteps += 1
+                        // 记录这一步的时间，供下次防抖比较
+                        self.lastStepTime = now
+                        // 更新界面上的步数显示
+                        self.statusMessage = "\(self.calibrationSteps) steps..."
+                        
+                    }
+                    // else：时间间隔太短，这个波峰是落地振荡，忽略
+                }
+                // else：波峰太矮，这是噪声不是步伐，忽略
             }
+            // else：值在减小且之前不是上升中 → 继续下降，什么都不做
+            
+            // 保存当前值，下次采样时用来比较趋势
+            self.lastAcceleration = magnitude
         }
     }
     
-    // 用户点击"Stop"按钮时调用
+    // 用户点击 CalibrationView 上的 "Stop" 按钮时调用
     func stopCalibration() {
         
-        // ===================================================================
-        // 第一步：停止计步
-        // ===================================================================
+        // =============================================================
+        // 第一步：停止加速度计
+        // =============================================================
         
-        pedometer.stopUpdates()
+        // 加速度计停止采集数据，之前注册的回调闭包不再被触发
+        motionManager.stopAccelerometerUpdates()
+        
+        // 更新标定状态
         isCalibrating = false
         
-        // ===================================================================
-        // 第二步：验证数据
-        // ===================================================================
+        // =============================================================
+        // 第二步：验证前置条件
+        // =============================================================
         
         // 确保有起点位置
+        // 如果 startPosition 是 nil，说明 startCalibration 失败了或者没被调用
         guard let startPos = startPosition else {
             statusMessage = "Error: no start position."
             return
         }
         
-        // 确保能拿到当前 ARKit 帧（终点位置）
+        // 确保能从 ARKit 拿到当前帧（包含终点位置）
         guard let frame = arSession?.currentFrame else {
             statusMessage = "Error: ARKit not available."
             return
         }
         
-        // 确保走了足够多的步数
-        // 步数太少，单步误差占比太大，结果不可靠
-        // 比如只走 2 步，ARKit 测量误差 0.1 米
-        //   步长 = (1.3 + 0.1) / 2 = 0.70 vs 实际 0.65，差了 8%
-        // 走 10 步的话：
-        //   步长 = (6.5 + 0.1) / 10 = 0.66 vs 实际 0.65，只差 1.5%
-        guard calibrationSteps >= 5 else {
-            statusMessage = "Too few steps (\(calibrationSteps)). Walk at least 5 steps."
+        // 读取最终步数
+        // 用 let 存成常量，后面多次使用
+        let finalSteps = calibrationSteps
+        
+        // 验证步数是否足够
+        // 步长 = 总距离 / 总步数
+        // 总步数越少，每一步的误差对结果的影响越大
+        // 5 步是一个最低要求，实际上建议走 10 步以上
+        guard finalSteps >= 5 else {
+            statusMessage = "Too few steps (\(finalSteps)). Walk at least 5 steps."
             return
         }
         
-        // ===================================================================
-        // 第三步：取终点位置
-        // ===================================================================
+        // =============================================================
+        // 第三步：计算行走距离
+        // =============================================================
         
+        // 取终点位置
         let endPos = frame.camera.transform.columns.3
         let endPosition = SIMD3<Float>(endPos.x, endPos.y, endPos.z)
         
-        // ===================================================================
-        // 第四步：计算水平距离
-        // ===================================================================
-        
-        // 只算水平距离（x 和 z 方向），忽略垂直方向（y）
-        // 原因：
-        //   步长应该是水平面上的前进距离
-        // 计算方法（勾股定理，和 CameraManager.getDistance 一样）：
-        //   dx = 终点 x - 起点 x（左右方向的位移）
-        //   dz = 终点 z - 起点 z（前后方向的位移）
-        //   距离 = √(dx² + dz²)
+        // 计算水平距离（只算 x 和 z 方向，忽略 y 方向）
+        // 因为步长的定义是"水平面上一步的前进距离"
+        // 如果把 y 也算进去，距离会被略微高估
         let dx = endPosition.x - startPos.x
         let dz = endPosition.z - startPos.z
         let distance = sqrtf(dx * dx + dz * dz)
         
-        // 距离太短说明用户没有真正向前走
-        // 可能是原地踏步、来回走、或者只挪了一小步
-        // 这些情况算出的步长都不对
+        // 验证距离是否合理
+        // 如果距离 < 1 米，可能的原因：
+        //   用户在原地踏步（脚在动但没有向前移动）
+        //   用户走了一个圈回到起点附近（距离是直线距离，不是路程）
+        //   ARKit 追踪丢失（位置数据不准）
+        // 这些情况下算出来的步长都没有意义
         guard distance > 1.0 else {
             statusMessage = "Distance too short (\(String(format: "%.1f", distance))m). Walk in a straight line."
             return
         }
         
-        // ===================================================================
-        // 第五步：计算步长
-        // ===================================================================
+        // =============================================================
+        // 第四步：计算步长
+        // =============================================================
         
-        // 步长 = 总距离 ÷ 总步数
-        let stepLength = distance / Float(calibrationSteps)
+        // 步长 = 总距离 / 总步数
+        let stepLength = distance / Float(finalSteps)
         
-        // 合理性检查
-        // 正常人单步步长范围：0.3 ~ 1.0 米
-        //   0.3 米：非常小的碎步（比如老人缓慢行走）
-        //   0.7 米：正常步速
-        //   1.0 米：大步快走或跑步
-        // 超出范围说明某个环节出了问题：
-        //   太小：可能用户转圈走了，实际前进距离很短
-        //   太大：可能 ARKit 追踪漂移了，距离被高估
+        // 步长合理性检查
+        // 正常人的单步步长范围：0.3 ~ 1.0 米
+        //   < 0.2 米：几乎不可能，说明数据有问题
+        //     可能原因：用户转圈走，直线距离很短但步数很多
+        //   > 1.0 米：大步快走的极限，超过说明数据有问题
+        //     可能原因：ARKit 位置漂移（追踪累积误差导致距离被高估）
+        // 检测到异常就提示重试，不保存这个结果
         guard stepLength > 0.2 && stepLength < 1.0 else {
             statusMessage = "Result unreasonable (\(String(format: "%.2f", stepLength))m/step). Please retry."
             return
         }
         
-        // ===================================================================
-        // 第六步：保存结果
-        // ===================================================================
+        // =============================================================
+        // 第五步：保存结果
+        // =============================================================
         
-        // 更新内存中的值（界面立刻刷新）
+        // 更新内存中的值
+        // CalibrationView 会立刻显示结果区域
         calibratedStepLength = stepLength
         calibrationDistance = distance
         
-        // 写入 UserDefaults（磁盘持久化）
-        // 下次打开 app 时，init() 里会读取这个值
+        // 写入 UserDefaults，持久化到磁盘
+        // 下次打开 app 时，init() 里的代码会读取这个值
+        // 用户不需要每次打开 app 都重新标定
         UserDefaults.standard.set(stepLength, forKey: stepLengthKey)
         
-        statusMessage = "Done! \(calibrationSteps) steps, \(String(format: "%.1f", distance))m → step: \(String(format: "%.2f", stepLength))m"
+        // 显示最终结果
+        // 把所有关键数据展示给用户，让他们确认是否合理
+        statusMessage = "Done! \(finalSteps) steps, \(String(format: "%.1f", distance))m → step: \(String(format: "%.2f", stepLength))m"
         
-        // 清理起点位置，为下次标定做准备
+        // 清理起点位置
         startPosition = nil
     }
     
-    // 这是给外部调用的核心方法
-    // 传入一个距离（米），返回大约还要走几步
-    //
-    // 举例：
-    //   障碍物距离 2.1 米，effectiveStepLength = 0.68 米
-    //   2.1 / 0.68 = 3.088
-    //   向上取整 → 返回 4
-    //
-    // 为什么向上取整（ceil）而不是四舍五入（round）？
-    //   这是安全考虑：
-    //     向上取整：3.09 → 4 步，用户以为还有 4 步的距离
-    //     四舍五入：3.09 → 3 步，用户以为还有 3 步就到了
-    //   多报一步 → 用户提前减速 → 更安全
-    //   少报一步 → 用户可能走多了撞上障碍物 → 危险
+    // 对外提供的方法，距离 → 步数
     func distanceToSteps(_ distance: Float) -> Int {
+        
+        // 步数 = 距离 / 步长
         let steps = distance / effectiveStepLength
+        
+        // 为什么向上取整而不是四舍五入（round）？
+        //
+        //   四舍五入：3.088 → 3 步
+        //     用户以为还有 3 步就到了
+        //     实际可能 3 步走完还差一点点，但用户已经放松了
+        //
+        //   向上取整：3.088 → 4 步
+        //     用户以为还有 4 步
+        //     多报一步 → 用户会走得更谨慎 → 更安全
+        //
+        //   对于视障辅助来说，"安全"比"精确"更重要
+        //   多走一步没事，少走一步可能撞上障碍物
         return Int(ceil(steps))
     }
 }

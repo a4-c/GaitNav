@@ -168,7 +168,6 @@ struct CalibrationView: View {
                 }
             }
         }
-        // 整个页面上下留一些呼吸空间
         .padding(.vertical, 32)
     }
 }
