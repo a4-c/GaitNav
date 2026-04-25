@@ -2,7 +2,8 @@ import ARKit
 import Combine
 
 // Inheriting from NSObject and conforming to ObservableObject
-// ObservableObject: when the data in this class changes, the SwiftUI interface will refresh automatically
+// ObservableObject：告诉 SwiftUI "我是一个可观察的数据源"
+// 当里面带 @Published 标记的属性变化时，界面会自动刷新
 class CameraManager: NSObject, ObservableObject {
     
     // 创建 ARSession 实例
