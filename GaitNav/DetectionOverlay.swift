@@ -66,7 +66,7 @@ struct DetectionOverlay: View {
     private func labelText(for detection: Detection) -> String {
         // 先拼基础信息：物体名 + 置信度百分比
         var text = "\(detection.label) \(Int(detection.confidence * 100))%"
-
+        
         // 如果有距离信息，追加距离
         // if let 是安全解包：如果 distance 不是 nil，就取出值赋给 d
         if let d = detection.distance {
