@@ -6,8 +6,9 @@ struct ContentView: View {
     // 当 CameraManager 被创建时，构造函数会自动启动摄像头
     @StateObject private var camera = CameraManager()
     
-    // 标定器：管理步长标定流程和步数换算
-    @StateObject private var calibrator = Calibrator()
+    // 步长转换器：协调标定、动态步长检测和距离 → 步数转换
+    // StepConverter 内部持有 Calibrator 和 DynamicStepEstimator
+    @StateObject private var stepConverter = StepConverter()
     
     // 控制是否显示标定页面
     // true = 弹出标定页面（以 sheet 的形式从底部滑上来）
@@ -26,7 +27,7 @@ struct ContentView: View {
             
             // 中层：检测框叠加层
             // camera.detections 变化时，这个视图会自动重绘
-            DetectionOverlay(detections: camera.detections, calibrator: calibrator)
+            DetectionOverlay(detections: camera.detections, stepConverter: stepConverter)
                 .ignoresSafeArea()
             
             // 上层：UI控件
@@ -78,13 +79,18 @@ struct ContentView: View {
             }
         }
         // .onAppear：页面第一次出现时执行
-        // 把 CameraManager 的 ARSession 传给 Calibrator
         .onAppear {
-            calibrator.arSession = camera.session
+            // 把 ARSession 传给 StepConverter
+            // StepConverter 会自动转发给 Calibrator 和 DynamicStepEstimator
+            stepConverter.setARSession(camera.session)
             // 启动动态步长检测
-            // ARSession 已经在运行，加速度计从这里开始持续采集
+            // 加速度计从这里开始持续采集
             // 用户走路时会自动实时计算步长
-            calibrator.startLiveDetection()
+            stepConverter.start()
+        }
+        // .onDisappear：页面消失时执行
+        .onDisappear {
+            stepConverter.stop()
         }
         // .sheet：模态页面
         // isPresented 绑定到 showCalibration：
@@ -94,7 +100,8 @@ struct ContentView: View {
         //   普通变量是只读的（单向：数据 → 界面）
         //   $变量 是双向绑定（数据 ↔ 界面），sheet 关闭时能把值改回 false
         .sheet(isPresented: $showCalibration) {
-            CalibrationView(calibrator: calibrator)
+            // CalibrationView 直接观察 StepConverter 内部的 Calibrator
+            CalibrationView(calibrator: stepConverter.calibrator)
         }
     }
     
@@ -103,10 +110,10 @@ struct ContentView: View {
     //   ⚡ 0.65m/step → 动态步长（实时检测中，用户正在走路）
     //   Step: 0.65m → 静态步长（标定值或默认值，用户静止）
     private var stepLengthLabel: String {
-        let value = String(format: "%.2f", calibrator.effectiveStepLength)
+        let value = String(format: "%.2f", stepConverter.effectiveStepLength)
         
         // 动态步长有效时显示 ⚡ 标记（表示实时检测中）
-        if calibrator.isDynamicActive {
+        if stepConverter.isDynamicActive {
             return "⚡ \(value)m/step"
         }
         // 否则显示静态步长
