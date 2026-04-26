@@ -42,11 +42,11 @@ struct ContentView: View {
                         // .sheet 修饰符会捕捉到这个变化，弹出标定页面
                         showCalibration = true
                     }) {
-                        // 按钮上显示当前有效步长
-                        // effectiveStepLength 会自动返回标定值或默认值
+                        // 按钮上显示当前有效步长 + 来源标记
+                        // effectiveStepLength 会自动返回动态值、标定值或默认值
                         // 用户一眼就能看到当前用的是什么步长
                         // 如果觉得不准，点击就能重新标定
-                        Text("Step: \(String(format: "%.2f", calibrator.effectiveStepLength))m")
+                        Text("\(stepLengthLabel)")
                             .font(.caption)
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
@@ -79,10 +79,12 @@ struct ContentView: View {
         }
         // .onAppear：页面第一次出现时执行
         // 把 CameraManager 的 ARSession 传给 Calibrator
-        // 标定流程需要用 ARSession 来读取手机的 3D 空间位置
-        // Calibrator 不自己创建 ARSession，因为一个 app 只能有一个
         .onAppear {
             calibrator.arSession = camera.session
+            // 启动动态步长检测
+            // ARSession 已经在运行，加速度计从这里开始持续采集
+            // 用户走路时会自动实时计算步长
+            calibrator.startLiveDetection()
         }
         // .sheet：模态页面
         // isPresented 绑定到 showCalibration：
@@ -94,6 +96,21 @@ struct ContentView: View {
         .sheet(isPresented: $showCalibration) {
             CalibrationView(calibrator: calibrator)
         }
+    }
+    
+    // 步长来源标签
+    // 帮助用户理解当前步长数据是怎么来的：
+    //   ⚡ 0.65m/step → 动态步长（实时检测中，用户正在走路）
+    //   Step: 0.65m → 静态步长（标定值或默认值，用户静止）
+    private var stepLengthLabel: String {
+        let value = String(format: "%.2f", calibrator.effectiveStepLength)
+        
+        // 动态步长有效时显示 ⚡ 标记（表示实时检测中）
+        if calibrator.isDynamicActive {
+            return "⚡ \(value)m/step"
+        }
+        // 否则显示静态步长
+        return "Step: \(value)m"
     }
 }
 
