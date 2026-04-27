@@ -10,12 +10,17 @@ struct ContentView: View {
     // StepConverter 内部持有 Calibrator 和 DynamicStepEstimator
     @StateObject private var stepConverter = StepConverter()
     
-    let speech = SpeechManager()
-    
     // 控制是否显示标定页面
     // true = 弹出标定页面（以 sheet 的形式从底部滑上来）
     // false = 隐藏标定页面
     @State private var showCalibration = false
+    
+    // 语音播报引擎
+    private let speech = SpeechManager()
+    
+    // 语音反馈管理器
+    // 延迟初始化（在 .onAppear 里设置），因为它依赖 stepConverter
+    @State private var feedbackManager: FeedbackManager? = nil
     
     // body 是 SwiftUI 要求的属性，定义这个页面长什么样
     var body: some View {
@@ -90,11 +95,20 @@ struct ContentView: View {
             // 用户走路时会自动实时计算步长
             stepConverter.start()
             
-            speech.speak("System ready")
+            // 初始化语音反馈管理器
+            feedbackManager = FeedbackManager(speech: speech, stepConverter: stepConverter)
         }
         // .onDisappear：页面消失时执行
+        // 停止加速度计和语音播报，避免 app 在后台时白费电
         .onDisappear {
             stepConverter.stop()
+            speech.stop()
+        }
+        // .onChange：每次 camera.detections 变化时触发
+        // 这是语音反馈的驱动点：感知管线每处理完一帧，就把最新检测结果传给 FeedbackManager
+        // FeedbackManager 内部判断是否需要播报（新物体、步数变化、危险距离等）
+        .onChange(of: camera.detections.map { $0.id }) {
+            feedbackManager?.update(with: camera.detections)
         }
         // .sheet：模态页面
         // isPresented 绑定到 showCalibration：
