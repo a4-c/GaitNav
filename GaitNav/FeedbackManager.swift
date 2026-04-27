@@ -1,11 +1,12 @@
 import Foundation
+import ARKit
 
 // 语音反馈管理器：决定"什么时候说什么"
 //
 // 职责：
 //   1. 跟踪每个物体的播报状态（上次播报的步数、时间）
 //   2. 判断是否需要播报（新物体、步数变化、进入危险距离）
-//   3. 组装播报文案（"person, 4 steps"）
+//   3. 组装播报文案（"person, 12 o'clock, 4 steps"）
 //   4. 按优先级调用 SpeechManager 的不同接口
 //
 // 每帧由 CameraManager 或 ContentView 调用 update(with:)
@@ -116,7 +117,13 @@ class FeedbackManager {
             
             // 执行播报
             if shouldAnnounce {
-                let text = buildText(label: detection.label, steps: steps, isUrgent: isUrgent)
+                
+                let text = buildText(
+                    label: detection.label,
+                    steps: steps,
+                    boundingBox: detection.boundingBox,
+                    isUrgent: isUrgent
+                )
                 
                 if isUrgent {
                     // 紧急：打断当前播报，立刻说
@@ -144,17 +151,51 @@ class FeedbackManager {
         }
     }
     
+    // 把物体在画面中的水平位置转换成时钟方位
+    //
+    // 映射关系：
+    //   iPhone 竖屏时水平视野（FOV）大约 60°
+    //   时钟上每小时 = 30°，所以 60° = 中心两侧各 1 小时
+    //   覆盖范围：11 点钟 ~ 1 点钟，正好三个位置
+    //
+    //   归一化 x 坐标：
+    //     0.0 ──── 0.25 ──────── 0.75 ──── 1.0
+    //         11点      12点（正前方）    1点
+    private func clockDirection(from boundingBox: CGRect) -> String {
+        
+        // 取检测框的水平中心点
+        let centerX = boundingBox.midX
+        
+        // 分区映射
+        // 12 点钟占中间 50%（0.25-0.75）
+        // 因为正前方的物体最重要，给它更宽的判定范围
+        let hour: Int
+        if centerX < 0.25 {
+            hour = 11
+        } else if centerX < 0.75 {
+            hour = 12
+        } else {
+            hour = 1
+        }
+        
+        return "\(hour) o'clock"
+    }
+    
     // 生成播报文案
-    // 普通："person, 4 steps"
-    // 紧急："warning, chair, 1 step"
-    private func buildText(label: String, steps: Int, isUrgent: Bool) -> String {
+    // 格式：[警告] + 物体名 + 方位 + 步数
+    //
+    // 示例：
+    //   普通："person, 12 o'clock, 4 steps"
+    //   紧急："warning, chair, 1 o'clock, 1 step"
+    private func buildText(label: String, steps: Int, boundingBox: CGRect, isUrgent: Bool) -> String {
         
         let stepWord = steps == 1 ? "step" : "steps"
+        let direction = clockDirection(from: boundingBox)
         
         if isUrgent {
-            return "warning, \(label), \(steps) \(stepWord)"
+            return "warning, \(label), \(direction), \(steps) \(stepWord)"
         } else {
-            return "\(label), \(steps) \(stepWord)"
+            return "\(label), \(direction), \(steps) \(stepWord)"
         }
     }
 }
