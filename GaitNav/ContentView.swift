@@ -10,6 +10,8 @@ struct ContentView: View {
     // StepConverter 内部持有 Calibrator 和 DynamicStepEstimator
     @StateObject private var stepConverter = StepConverter()
     
+    let speech = SpeechManager()
+    
     // 控制是否显示标定页面
     // true = 弹出标定页面（以 sheet 的形式从底部滑上来）
     // false = 隐藏标定页面
@@ -87,6 +89,8 @@ struct ContentView: View {
             // 加速度计从这里开始持续采集
             // 用户走路时会自动实时计算步长
             stepConverter.start()
+            
+            speech.speak("System ready")
         }
         // .onDisappear：页面消失时执行
         .onDisappear {
