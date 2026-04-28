@@ -5,12 +5,12 @@ import ARKit
 //
 // 职责：
 //   1. 跟踪每个物体的播报状态（上次播报的步数、时间）
-//   2. 判断是否需要播报（新物体、步数变化、进入危险距离）
-//   3. 组装播报文案（"person, 12 o'clock, 4 steps"）
-//   4. 按优先级调用 SpeechManager 的不同接口
+//   2. 按距离排序，只关注最近的 1-2 个物体（最危险的优先）
+//   3. 判断是否需要播报（新物体、步数变化、进入危险距离）
+//   4. 组装播报文案（"person, 12 o'clock, 4 steps"）
+//   5. 按优先级调用 SpeechManager 的不同接口
 //
 // 每帧由 CameraManager 或 ContentView 调用 update(with:)
-// 内部判断后决定是否触发语音
 class FeedbackManager {
     
     // 语音引擎：负责实际的 TTS 播报
@@ -37,6 +37,18 @@ class FeedbackManager {
     // 但也不能太短，否则会变成"warning warning warning"的轰炸
     private let urgentCooldown: TimeInterval = 2.0
     
+    // 每次 update 最多播报几个物体
+    // 设为 1：每次只播报最危险的那一个，用户听完一条完整信息再接收下一条
+    // 因为 update 每帧都会被调用，下一帧自然会轮到第二危险的物体
+    // 设为 2 或更大：理论上可以连续播报多个，但实际效果是用户只听到碎片
+    private let maxAnnouncementsPerUpdate = 1
+    
+    // 优先考虑的候选物体数量
+    // 从按距离排序后的列表里取前 N 个来评估是否需要播报
+    // 远处的物体直接跳过，不浪费判断逻辑
+    // 2 个是因为：最近的可能刚播报过（在冷却中），第二近的可以补上
+    private let maxCandidates = 2
+    
     // 用 UUID 作为 key，追踪每个物体的播报历史
     // UUID 来自 ObjectTracker 分配的稳定 ID，跨帧不变
     private var objectStates: [UUID: FeedbackState] = [:]
@@ -61,6 +73,14 @@ class FeedbackManager {
     
     // 接收最新的检测结果，判断是否需要播报
     // 这个方法应该在主线程调用（和 UI 更新同步）
+    //
+    // 流程：
+    //   1. 收集所有物体 ID（用于清理已消失物体）
+    //   2. 过滤掉没有距离的物体
+    //   3. 按距离排序（最近的最危险，优先处理）
+    //   4. 只取最近的 maxCandidates 个作为候选
+    //   5. 对候选物体逐个判断是否需要播报
+    //   6. 播报了 maxAnnouncementsPerUpdate 个就停止
     func update(with detections: [Detection]) {
         
         // 如果没有 stepConverter，无法算步数，不播报
@@ -68,18 +88,27 @@ class FeedbackManager {
         
         let now = Date()
         
-        // 记录这一帧里存在的物体 ID
-        // 用于之后清理已消失物体的状态
-        var currentIDs = Set<UUID>()
+        // 记录这一帧里存在的所有物体 ID（包括远处的、没距离的）
+        // 用于最后清理已消失物体的状态
+        let currentIDs = Set(detections.map { $0.id })
         
-        for detection in detections {
-            currentIDs.insert(detection.id)
+        // 过滤 + 排序：只保留有距离信息的物体，按距离从近到远排列
+        // 没有距离的物体无法判断危险程度，直接跳过
+        // 最近的物体排在前面，优先获得播报机会
+        let candidates = detections
+            .filter { $0.distance != nil }
+            .sorted { $0.distance! < $1.distance! }
+            .prefix(maxCandidates)
+        
+        // 这次 update 已经播报了几个物体
+        var announcementsMade = 0
+        
+        for detection in candidates {
             
-            // 没有距离信息的物体不播报
-            // 因为"person, unknown distance"对用户没有实际帮助
-            guard let distance = detection.distance else { continue }
+            // 已经播报够了，剩下的等下一帧
+            if announcementsMade >= maxAnnouncementsPerUpdate { break }
             
-            // 算出当前步数
+            let distance = detection.distance!
             let steps = stepConverter.distanceToSteps(distance)
             
             // 获取或创建这个物体的播报状态
@@ -115,7 +144,7 @@ class FeedbackManager {
                 shouldAnnounce = false
             }
             
-            // 执行播报
+            // 执行播报 
             if shouldAnnounce {
                 
                 let text = buildText(
@@ -138,6 +167,8 @@ class FeedbackManager {
                     lastAnnouncedSteps: steps,
                     lastAnnounceTime: now
                 )
+                
+                announcementsMade += 1
             }
         }
         
@@ -167,8 +198,7 @@ class FeedbackManager {
         let centerX = boundingBox.midX
         
         // 分区映射
-        // 12 点钟占中间 50%（0.25-0.75）
-        // 因为正前方的物体最重要，给它更宽的判定范围
+        // 12 点钟占中间 50%（0.25-0.75），因为正前方的物体最重要
         let hour: Int
         if centerX < 0.25 {
             hour = 11
