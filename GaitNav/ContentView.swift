@@ -96,7 +96,16 @@ struct ContentView: View {
             stepConverter.start()
             
             // 初始化语音反馈管理器
-            feedbackManager = FeedbackManager(speech: speech, stepConverter: stepConverter)
+            let fm = FeedbackManager(speech: speech, stepConverter: stepConverter)
+            feedbackManager = fm
+            
+            // 把步伐事件连接到语音反馈
+            // 用户每走一步，StepConverter 检测到后通知 FeedbackManager
+            // FeedbackManager 据此决定是否播报倒数数字
+            // 这是语音倒数的"主路"：confirmed step 优先于画面帧刷新。
+            stepConverter.onStepDetected = {
+                fm.handleStep(with: camera.detections)
+            }
         }
         // .onDisappear：页面消失时执行
         // 停止加速度计和语音播报，避免 app 在后台时白费电
@@ -104,11 +113,12 @@ struct ContentView: View {
             stepConverter.stop()
             speech.stop()
         }
-        // .onChange：每次 camera.detections 变化时触发
+        // .onReceive：每次 camera.detections 发布新结果时触发
         // 这是语音反馈的驱动点：感知管线每处理完一帧，就把最新检测结果传给 FeedbackManager
         // FeedbackManager 内部判断是否需要播报（新物体、步数变化、危险距离等）
-        .onChange(of: camera.detections.map { $0.id }) {
-            feedbackManager?.update(with: camera.detections)
+        // 这条路主要负责刷新实时步数；只有步伐漏检时，才会兜底推进倒数。
+        .onReceive(camera.$detections) { detections in
+            feedbackManager?.update(with: detections)
         }
         // .sheet：模态页面
         // isPresented 绑定到 showCalibration：

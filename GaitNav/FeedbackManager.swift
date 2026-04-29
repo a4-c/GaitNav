@@ -6,17 +6,33 @@ import ARKit
 // 设计原则（来自倒车雷达模型）：
 //   1. 漏斗原则：一次只关注一个障碍物（最危险的那个）
 //      等它被绕过或消失后，再切到下一个。避免"报菜名"。
-//   2. 语音只负责"定性"：告诉用户"是什么、在哪里"
-//      初次发现时播报一次完整信息（"chair, 12 o'clock, 7 steps"）
-//      之后只在状态有意义地变化时才再开口
-//   3. 状态变化驱动，而不是定时驱动：
-//      只在步数跨过阈值（7, 5, 3, 1）、方位改变、或新物体突然出现时播报
-//      其余时间保持安静
+//   2. 两段式反馈：
+//      远距离（> 5 步）→ 语音播报物体名 + 方位 + 步数，只在关键阈值时触发
+//      近距离（≤ 5 步）→ 步伐同步倒数，用户每走一步说一个数字
+//      1 步 → 最后一句短促行动提示（"Arrived"）
+//   3. 倒数与步伐同步：
+//      倒数模式下的数字播报由 StepConverter 的步伐检测事件驱动
+//      用户走一步 → 加速度计检测到 → handleStep() 被调用 → 读取 LiDAR 最新距离
+//      每个确认步伐推进一个数字；如果动态步长偏差变大，就先播报修正值。
+//      这样倒数节奏和用户的步伐完全同步，而不是按帧率随机触发。
 //   4. 优先级过滤：
 //      路径中央 + 近距离 > 侧边 + 远距离
 //      突然出现的近距离物体 → 打断一切
 //
-// 每帧由 ContentView 的 .onChange 调用 update(with:)
+// 典型播报流程（用户向 10 步外的椅子走去）：
+//   "chair, 12 o'clock, 10 steps"  ← 首次发现，完整播报
+//   "chair, 7 steps"               ← 跨过阈值 7，简短更新
+//   "5"                            ← 进入倒数模式（用户走了一步，距离到 5 步）
+//   "4"                            ← 用户又走了一步
+//   "3"                            ← ...
+//   "2"
+//   "Arrived"                       ← 最后一步，不再使用 warning 长句
+//
+// 全程 7 句话，中间大量安静时间。用户不需要自己记步数。
+//
+// 两个入口：
+//   update(with:) — 每帧调用，处理焦点管理、首报、方位变化、阈值跨越、紧急警告
+//   handleStep()  — 每走一步调用，处理倒数模式下的数字播报
 class FeedbackManager {
     
     // 语音引擎：负责实际的 TTS 播报
@@ -43,6 +59,14 @@ class FeedbackManager {
     // 用于检测方位是否发生了变化（比如物体从正前方移到了右侧）
     private var lastAnnouncedDirection: String? = nil
     
+    // 聚焦物体的实时步数（由 update() 每帧刷新）
+    // handleStep() 读取这个值来决定是否播报倒数数字
+    // 和 lastAnnouncedSteps 的区别：
+    //   lastAnnouncedSteps = 上次播报时的步数（只在播报时更新）
+    //   focusedCurrentSteps = LiDAR 测到的最新步数（每帧更新）
+    // handleStep() 比较这两个值：如果 focusedCurrentSteps < lastAnnouncedSteps → 该报数字了
+    private var focusedCurrentSteps: Int? = nil
+    
     // =====================================================================
     // 帧间比较：检测"突然出现"的物体
     // =====================================================================
@@ -52,20 +76,27 @@ class FeedbackManager {
     private var previousIDs: Set<UUID> = []
     
     // =====================================================================
-    // 阈值配置
+    // 阈值 & 倒数配置
     // =====================================================================
     
-    // 步数阈值：只在步数从上方跨过这些值时触发播报
-    // 比如用户从 8 步走到 7 步 → 跨过 7 → 播报 "chair, 7 steps"
-    // 从 7 步走到 6 步 → 没有跨过任何阈值 → 安静
-    // 从 6 步走到 5 步 → 跨过 5 → 播报 "chair, 5 steps"
-    //
-    // 这样走完全程（10 步到 0 步），用户大约只听到 4 句话
-    // 而不是每走一步都被念一次
-    private let stepThresholds: [Int] = [7, 5, 3, 1]
+    // 远距离阈值：步数 > countdownThreshold 时，只在跨过这些值时播报
+    // 比如 10 步 → 跨过 7 → 播报 "chair, 7 steps"
+    // 不包含 5，因为 5 是倒数模式的入口，由倒数逻辑处理
+    private let stepThresholds: [Int] = [7]
     
-    // 1 步以内 = 紧急，使用打断式播报
+    // 倒数模式入口：步数从上方跨过这个值时，进入倒数模式
+    // 进入后只说数字（"5", "4", "3", "2"），每减 1 步报一次
+    // 用户已经从首报知道了"是什么、在哪里"，倒数只需要告诉"还有多远"
+    private let countdownThreshold = 5
+    
+    // 1 步以内 = 最后一步，倒数模式下使用短促行动提示
     private let urgentStepThreshold = 1
+    
+    // 最后一步播报。这里没有路线转向信息，所以默认用 Arrived
+    private let finalCountdownText = "Arrived"
+    
+    // 动态步长变化造成的估算偏差达到这个步数时，播报一次修正。
+    private let correctionStepDelta = 2
     
     // 突然出现的物体在这个步数以内时，才触发紧急首报
     // 远处新出现的物体不需要紧急打断，等它成为焦点时正常播报就行
@@ -97,14 +128,28 @@ class FeedbackManager {
     // 防抖
     // =====================================================================
     
-    // 两次播报之间的最短间隔
+    // 两次播报之间的最短间隔（远距离模式）
     // 防止在阈值边界上因为距离抖动而反复触发
-    // 1.5 秒足够短，不会让用户觉得反应迟钝
-    // 又足够长，过滤掉帧间的距离波动
     private let minAnnouncementInterval: TimeInterval = 1.5
+    
+    // 倒数模式下的最短间隔。
+    // 步伐确认已经由 StepConverter 防抖，这里只防同一事件链里的重复播报。
+    private let countdownMinInterval: TimeInterval = 0.25
+    
+    // 如果加速度计漏检了一步，但视觉/LiDAR 步数已经稳定下降，
+    // 等待这段时间后用视觉步数兜底播报，避免倒数卡住。
+    private let visualCountdownFallbackDelay: TimeInterval = 0.55
+    
+    // 视觉兜底倒数之间的最短间隔，防止同一段距离抖动连报。
+    private let visualCountdownMinInterval: TimeInterval = 0.75
     
     // 上次播报的时间
     private var lastAnnouncementTime: Date = .distantPast
+    
+    // 上次 confirmed step 的时间。
+    // 视觉兜底要参考它：如果刚刚才检测到一步，就让 handleStep() 负责播报；
+    // 如果已经过了一小段时间还没有步伐事件，但屏幕步数下降了，再由视觉兜底接管。
+    private var lastConfirmedStepTime: Date = .distantPast
     
     // =====================================================================
     // 候选物体
@@ -136,7 +181,7 @@ class FeedbackManager {
     //   3. 检查是否有突然出现的近距离危险物体 → 打断
     //   4. 如果没有聚焦物体 → 选一个新的，首次播报
     //   5. 更新聚焦物体的状态：方位变化 → 播报；步数跨过阈值 → 播报
-    func update(with detections: [Detection]) {
+    func update(with detections: [Detection], isConfirmedStepUpdate: Bool = false) {
         
         guard let stepConverter = stepConverter else { return }
         
@@ -178,18 +223,25 @@ class FeedbackManager {
         // 第二步：检查聚焦物体是否还有效
         // =================================================================
         
+        // 先记录进入 update() 时是否已经在倒数模式。
+        // 注意这里要在刷新 focusedCurrentSteps 之前判断：
+        // 如果已经进入倒数，就不要因为动态步长抖动导致"步数变大"而释放焦点。
+        let wasInCountdown = isCountdownActive
+        
         if let focusID = focusedObjectID {
             
             if !currentIDs.contains(focusID) {
                 // 物体从画面中消失了（用户走过了它，或者它离开了视野）
                 // 释放焦点，让系统选下一个
                 releaseFocus()
-                
+            
             } else if let focused = candidates.first(where: { $0.detection.id == focusID }),
                       let lastSteps = lastAnnouncedSteps,
+                      !wasInCountdown,
                       focused.steps > lastSteps + releaseStepIncrease {
                 // 用户在远离这个物体（步数在增加）
                 // 可能是用户绕过了它，或者转向走了别的方向
+                // 但倒数模式中不做这个判断，避免 5、4、3 时突然切物体并插入完整句。
                 releaseFocus()
             }
         }
@@ -205,6 +257,12 @@ class FeedbackManager {
             if candidate.isNew
                 && candidate.steps <= suddenAppearanceThreshold
                 && candidate.isCenter {
+                
+                // 倒数期间不要让 2-3 步的新物体完整句打断节奏；
+                // 只有真正 1 步以内的危险仍然允许打断。
+                if isCountdownActive && candidate.steps > urgentStepThreshold {
+                    continue
+                }
                 
                 // 构建播报文案 & 播报
                 let text: String
@@ -224,6 +282,7 @@ class FeedbackManager {
                 focusedObjectID = candidate.detection.id
                 lastAnnouncedSteps = candidate.steps
                 lastAnnouncedDirection = candidate.direction
+                focusedCurrentSteps = candidate.steps
                 lastAnnouncementTime = now
                 
                 previousIDs = currentIDs
@@ -253,6 +312,7 @@ class FeedbackManager {
                 focusedObjectID = candidate.detection.id
                 lastAnnouncedSteps = candidate.steps
                 lastAnnouncedDirection = candidate.direction
+                focusedCurrentSteps = candidate.steps
                 lastAnnouncementTime = now
                 
                 previousIDs = currentIDs
@@ -261,8 +321,18 @@ class FeedbackManager {
         }
         
         // =================================================================
-        // 第五步：更新聚焦物体——只在状态有意义变化时播报
+        // 第五步：更新聚焦物体
         // =================================================================
+        //
+        // update() 在这一步负责：
+        //   - 每帧刷新 focusedCurrentSteps（给 handleStep 用）
+        //   - 检测方位变化
+        //   - 远距离阈值播报
+        //   - 倒数模式入口（说 "5"）
+        //   - 紧急警告（1 步以内，不能等步伐事件，必须立刻触发）
+        //
+        // update() 不负责：
+        //   - 倒数模式下的数字播报（4, 3, 2）→ 由 handleStep() 处理
         
         if let focusID = focusedObjectID,
            let candidate = candidates.first(where: { $0.detection.id == focusID }) {
@@ -270,57 +340,76 @@ class FeedbackManager {
             let steps = candidate.steps
             let direction = candidate.direction
             
-            // 防抖：距上次播报不够久就先不说
-            // 过滤距离在阈值边界上来回抖动导致的重复触发
+            // 每帧刷新实时步数，供 handleStep() 读取
+            // 这是 update() 和 handleStep() 之间的数据桥梁
+            focusedCurrentSteps = steps
+            
+            // "是否在倒数模式"以 lastAnnouncedSteps 为准：
+            // 只要语音已经说过 5 或更小，就认为用户正在听倒数。
+            // 这时普通 update() 要尽量安静，避免完整句打断数字节奏。
+            let isInCountdown = (lastAnnouncedSteps ?? Int.max) <= countdownThreshold
+            
+            // ----- 最后一步 / 紧急警告（绕过防抖，立刻触发）-----
+            // 1 步以内是"必须立刻反应"的距离
+            // 不能等步伐事件——万一用户没在走路（物体在朝用户移动），
+            // handleStep() 永远不会被调用，用户就听不到警告
+            if steps <= urgentStepThreshold,
+               let lastSteps = lastAnnouncedSteps,
+               lastSteps > urgentStepThreshold {
+                let text = isInCountdown ? finalCountdownText : buildUrgentText(candidate)
+                speech.speakInterrupting(text)
+                lastAnnouncedSteps = steps
+                lastAnnouncementTime = now
+                previousIDs = currentIDs
+                return
+            }
+            
+            // 视觉兜底放在普通播报规则之前。
+            // 原因：如果屏幕步数已经从 5 到 4，但加速度计漏检，
+            // 我们宁愿补一个短数字，也不要继续等待或说完整句。
+            if tryVisualCountdownFallback(now: now, isConfirmedStepUpdate: isConfirmedStepUpdate) {
+                previousIDs = currentIDs
+                return
+            }
+            
+            // ----- 防抖 -----
             guard now.timeIntervalSince(lastAnnouncementTime) >= minAnnouncementInterval else {
                 previousIDs = currentIDs
                 return
             }
             
             // ----- 方位变化检测 -----
-            // 物体从 12 点移到 1 点 → 说明用户走偏了，或者物体在移动
-            // 需要简短提醒用户：方位变了，注意调整
-            if direction != lastAnnouncedDirection {
+            // 倒数期间保持安静，避免方向短句打断数字节奏。
+            if !isInCountdown && direction != lastAnnouncedDirection {
                 let text = "\(candidate.detection.label), \(direction)"
                 speech.speak(text)
                 lastAnnouncedDirection = direction
                 lastAnnouncedSteps = steps
                 lastAnnouncementTime = now
-                
                 previousIDs = currentIDs
                 return
             }
             
-            // ----- 步数阈值检测 -----
-            // 只在步数从上方跨过阈值时才播报
-            // "跨过"的定义：上次播报时的步数 > 阈值，当前步数 <= 阈值
-            // 用 .first 找到最高的那个被跨过的阈值
-            //
-            // 举例：lastAnnouncedSteps = 8, steps = 4
-            //   检查 7: 8 > 7 && 4 <= 7 → true → 跨过了 7
-            //   （.first 命中，不再检查后面的）
-            //   播报 "chair, 4 steps"，记 lastAnnouncedSteps = 4
-            //   下次 steps = 2 时：
-            //     检查 7: 4 > 7 → false
-            //     检查 5: 4 > 5 → false
-            //     检查 3: 4 > 3 && 2 <= 3 → true → 跨过了 3
-            //     播报 "chair, 2 steps"
-            if let lastSteps = lastAnnouncedSteps {
+            // ----- 远距离：阈值播报 -----
+            // 倒数入口已经由 tryVisualCountdownFallback() 统一处理：
+            // confirmed step 可以立刻说 "5"，普通视觉帧只在步伐漏检后兜底说 "5"。
+            // 这里保留的只是 7 步这类远距离简短更新。
+            if !isInCountdown, let lastSteps = lastAnnouncedSteps, steps < lastSteps {
+                
+                // 检查是否刚跨入倒数范围（从 6+ 步降到 5 步以下）
+                let enteredCountdown = lastSteps > countdownThreshold && steps <= countdownThreshold
+                
+                // 检查是否跨过远距离阈值
                 let crossedThreshold = stepThresholds.first { threshold in
                     lastSteps > threshold && steps <= threshold
                 }
                 
-                if crossedThreshold != nil {
-                    if steps <= urgentStepThreshold {
-                        // 进入 1 步危险范围 → 打断式警告
-                        let text = buildUrgentText(candidate)
-                        speech.speakInterrupting(text)
-                    } else {
-                        // 普通阈值更新 → 简短播报（物体名 + 步数）
-                        // 用户已经知道方位了，不重复
-                        let text = buildBriefText(candidate)
-                        speech.speak(text)
-                    }
+                if crossedThreshold != nil && !enteredCountdown {
+                    // 跨过远距离阈值 → 简短播报
+                    // 如果这次同时跨进 5 步倒数范围，就不说 "chair, 5 steps"；
+                    // 留给数字倒数说 "5"，避免完整句打断。
+                    let text = buildBriefText(candidate)
+                    speech.speak(text)
                     lastAnnouncedSteps = steps
                     lastAnnouncementTime = now
                 }
@@ -333,6 +422,134 @@ class FeedbackManager {
         previousIDs = currentIDs
     }
     
+    // 步伐同步倒数
+    //
+    // 由 StepConverter 在检测到一步时调用（通过 onStepDetected 回调）
+    //
+    // 只在倒数模式下推进数字：
+    //   读取 focusedCurrentSteps（update() 刷新的 LiDAR 最新距离）
+    //   每个 confirmed step 推进一个倒数刻度
+    //   如果实时估算和倒数刻度偏差很大 → 先说 "about N steps"
+    //
+    // 这样倒数节奏完全跟随用户的脚步：
+    //   用户走得快 → 倒数快（因为步伐事件频率高）
+    //   用户走得慢 → 倒数慢
+    //   用户停下 → 倒数暂停（没有步伐事件触发）
+    func handleStep(with detections: [Detection]) {
+        
+        // 这代表"主路"事件：加速度计已经确认用户迈了一步。
+        // 记录时间后，视觉兜底会短暂让路，避免同一步被说两次。
+        lastConfirmedStepTime = Date()
+        
+        // 先用这一次确认步伐时的最新感知结果刷新焦点和实时步数。
+        // 这样语音倒数和屏幕步数都来自同一条：confirmed step -> latest distance -> current step estimate。
+        update(with: detections, isConfirmedStepUpdate: true)
+        
+        // 前置条件检查
+        guard focusedObjectID != nil else { return }
+        guard let currentSteps = focusedCurrentSteps else { return }
+        guard let lastSteps = lastAnnouncedSteps else { return }
+        
+        let now = Date()
+        
+        // 倒数模式下，语音遵守用户的心理预期：
+        // 上次说 5，这次确认一步后默认应该说 4。
+        // 不直接读 currentSteps，是为了避免 LiDAR/步长抖动让语音倒数跳来跳去。
+        let expectedNextSteps = max(lastSteps - 1, urgentStepThreshold)
+        let drift = abs(currentSteps - expectedNextSteps)
+        
+        // 如果动态步长让剩余步数发生明显修正，优先播报 "about N steps"。
+        // 例如用户从快走突然放慢，系统估算从 5 修正到 8，就不要硬倒数到 4。
+        if drift >= correctionStepDelta,
+           currentSteps > urgentStepThreshold,
+           now.timeIntervalSince(lastAnnouncementTime) >= minAnnouncementInterval {
+            speech.speak(buildCorrectionText(steps: currentSteps))
+            lastAnnouncedSteps = currentSteps
+            lastAnnouncementTime = now
+            return
+        }
+        
+        // 只在倒数模式下生效（lastAnnouncedSteps <= 5）
+        guard lastSteps <= countdownThreshold else { return }
+        
+        // 防抖：如果 update() 已经在本次 confirmed step 链路中播报，避免 handleStep() 立刻再播一次
+        guard now.timeIntervalSince(lastAnnouncementTime) >= countdownMinInterval else { return }
+        
+        // confirmed step 正常推进倒数。
+        // 这里不重复写 speech.speak / speakInterrupting 的细节，统一交给 helper。
+        speakCountdownStep(expectedNextSteps)
+        
+        lastAnnouncedSteps = expectedNextSteps
+        lastAnnouncementTime = now
+    }
+    
+    // 当步伐检测漏掉，但视觉步数已经下降时，用视觉结果兜底推进倒数。
+    //
+    // 为什么需要这个函数？
+    //   屏幕步数来自 LiDAR + 动态步长，所以它可能已经准确显示 4；
+    //   但如果加速度计没有检测到那一步，handleStep() 不会被调用，语音就会卡在 5。
+    //
+    // 这个函数做的事情：
+    //   1. 只在没有近期 confirmed step 时介入，避免和主路重复播报。
+    //   2. 只在 currentSteps 真的比 lastAnnouncedSteps 小时播报，避免距离抖动。
+    //   3. 只说短数字或 Arrived，不说完整物体句。
+    private func tryVisualCountdownFallback(now: Date, isConfirmedStepUpdate: Bool) -> Bool {
+        guard let currentSteps = focusedCurrentSteps else { return false }
+        guard let lastSteps = lastAnnouncedSteps else { return false }
+        
+        // confirmed step 路径可以立即进入倒数；
+        // 普通画面帧必须先等一小段时间，确认不是步伐事件马上要来了。
+        let canEnterCountdown = isConfirmedStepUpdate || now.timeIntervalSince(lastConfirmedStepTime) >= visualCountdownFallbackDelay
+        
+        // 情况 A：还没正式进入倒数，但视觉步数已经从 6+ 变成 5 或更小。
+        // 如果这是 confirmed step 路径，直接说 "5"；
+        // 如果这是普通画面帧，只有在步伐漏检延迟后才兜底说 "5"。
+        if lastSteps > countdownThreshold && currentSteps <= countdownThreshold {
+            let minInterval = isConfirmedStepUpdate ? countdownMinInterval : visualCountdownMinInterval
+            guard canEnterCountdown else { return false }
+            guard now.timeIntervalSince(lastAnnouncementTime) >= minInterval else { return false }
+            speakCountdownStep(currentSteps)
+            lastAnnouncedSteps = max(currentSteps, urgentStepThreshold)
+            lastAnnouncementTime = now
+            return true
+        }
+        
+        // 情况 B：已经在倒数中了，比如上次说了 5。
+        // 只有屏幕步数真的降到 4、3、2、1 时才兜底播报。
+        guard lastSteps <= countdownThreshold else { return false }
+        guard currentSteps < lastSteps else { return false }
+        guard now.timeIntervalSince(lastConfirmedStepTime) >= visualCountdownFallbackDelay else { return false }
+        guard now.timeIntervalSince(lastAnnouncementTime) >= visualCountdownMinInterval else { return false }
+        
+        speakCountdownStep(currentSteps)
+        lastAnnouncedSteps = max(currentSteps, urgentStepThreshold)
+        lastAnnouncementTime = now
+        return true
+    }
+    
+    // 倒数模式的判定比 lastAnnouncedSteps 略宽：
+    // - lastAnnouncedSteps <= 5：语音已经进入倒数
+    // - focusedCurrentSteps <= 5：画面已经进入近距离，即使语音还没来得及说 5
+    // 这样可以更早压制完整句，保护倒数体验。
+    private var isCountdownActive: Bool {
+        if let lastSteps = lastAnnouncedSteps, lastSteps <= countdownThreshold {
+            return true
+        }
+        if let currentSteps = focusedCurrentSteps, currentSteps <= countdownThreshold {
+            return true
+        }
+        return false
+    }
+    
+    // 数字倒数统一从这里播，避免多个地方各自处理 "Arrived"。
+    private func speakCountdownStep(_ steps: Int) {
+        if steps <= urgentStepThreshold {
+            speech.speakInterrupting(finalCountdownText)
+        } else {
+            speech.speak("\(steps)")
+        }
+    }
+    
     // =====================================================================
     // 焦点管理
     // =====================================================================
@@ -343,6 +560,7 @@ class FeedbackManager {
         focusedObjectID = nil
         lastAnnouncedSteps = nil
         lastAnnouncedDirection = nil
+        focusedCurrentSteps = nil
     }
     
     // =====================================================================
@@ -398,5 +616,12 @@ class FeedbackManager {
     private func buildUrgentText(_ candidate: Candidate) -> String {
         let stepWord = candidate.steps == 1 ? "step" : "steps"
         return "warning, \(candidate.detection.label), \(candidate.direction), \(candidate.steps) \(stepWord)"
+    }
+    
+    // 修正播报：动态步长发生明显变化时使用
+    // 示例："about 8 steps"
+    private func buildCorrectionText(steps: Int) -> String {
+        let stepWord = steps == 1 ? "step" : "steps"
+        return "about \(steps) \(stepWord)"
     }
 }

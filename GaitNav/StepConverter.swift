@@ -102,6 +102,11 @@ class StepConverter: ObservableObject {
     // 存储 Combine 订阅，防止被提前释放
     private var cancellables = Set<AnyCancellable>()
     
+    // 步伐事件回调：每检测到一步就触发
+    // FeedbackManager 通过这个回调来同步倒数播报和实际步伐
+    // 只在 .live 模式下触发（标定模式下步伐由 Calibrator 处理）
+    var onStepDetected: (() -> Void)?
+    
     // =====================================================================
     // 初始化
     // =====================================================================
@@ -294,7 +299,7 @@ class StepConverter: ObservableObject {
             
             // 当前值比上一次大 → 加速度在增大 → 标记为上升趋势
             isRising = true
-            
+        
         } else if isRising {
             
             // 当前值 ≤ 上一次 且 之前在上升 → 转折点 → 波峰
@@ -315,17 +320,20 @@ class StepConverter: ObservableObject {
                     
                     // 根据当前模式分发步伐事件
                     switch currentMode {
-                        
+                    
                     case .calibration:
                         calibrator.handleStep()
-                        
+                    
                     case .live:
                         dynamicEstimator.handleStep()
                         // 动态步长更新后，通知 SwiftUI 刷新界面
                         // 因为 effectiveStepLength 可能变了
                         objectWillChange.send()
+                        // 通知 FeedbackManager：用户走了一步
+                        // FeedbackManager 会据此决定是否播报倒数数字
+                        onStepDetected?()
                     }
-                    
+                
                 }
                 // else：时间间隔太短，这个波峰是落地振荡，忽略
             }
