@@ -15,6 +15,9 @@ struct ContentView: View {
     // false = 隐藏标定页面
     @State private var showCalibration = false
     
+    // 语音反馈距离单位：默认步数，用户可切换为米数
+    @State private var feedbackDistanceMode = FeedbackDistanceMode.saved
+    
     // 语音播报引擎
     private let speech = SpeechManager()
     
@@ -41,10 +44,22 @@ struct ContentView: View {
             // VStack 是垂直排列布局
             VStack {
                 
-                // 右上角：标定入口按钮
+                // 顶部：语音单位切换 + 标定入口按钮
                 // HStack 是水平排列，Spacer 把按钮推到最右边
                 HStack {
+                    Picker("Feedback distance", selection: $feedbackDistanceMode) {
+                        ForEach(FeedbackDistanceMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 170)
+                    .background(.black.opacity(0.6))
+                    .cornerRadius(8)
+                    .padding(.leading, 16)
+                    
                     Spacer()
+                    
                     Button(action: {
                         // 点击后把 showCalibration 设为 true
                         // .sheet 修饰符会捕捉到这个变化，弹出标定页面
@@ -96,7 +111,7 @@ struct ContentView: View {
             stepConverter.start()
             
             // 初始化语音反馈管理器
-            let fm = FeedbackManager(speech: speech, stepConverter: stepConverter)
+            let fm = FeedbackManager(speech: speech, stepConverter: stepConverter, distanceMode: feedbackDistanceMode)
             feedbackManager = fm
             
             // 把步伐事件连接到语音反馈
@@ -119,6 +134,10 @@ struct ContentView: View {
         // 这条路主要负责刷新实时步数；只有步伐漏检时，才会兜底推进倒数。
         .onReceive(camera.$detections) { detections in
             feedbackManager?.update(with: detections)
+        }
+        .onChange(of: feedbackDistanceMode) { oldMode, newMode in
+            newMode.save()
+            feedbackManager?.distanceMode = newMode
         }
         // .sheet：模态页面
         // isPresented 绑定到 showCalibration：

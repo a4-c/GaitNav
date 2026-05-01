@@ -168,7 +168,18 @@ class ObjectTracker {
         // ===================================================================
         
         // removeAll(where:) 会删掉所有满足条件的元素
-        trackedObjects.removeAll { $0.missedFrames > maxMissedFrames }
+        trackedObjects.removeAll { tracked in
+            // 默认容忍度
+            var allowedMissed = maxMissedFrames
+            
+            // 如果物体离得很近（比如小于 3.5 米），给予更长的容忍期（例如 10 帧，约 0.3 秒）
+            // 这样即便用户走动导致画面剧烈抖动，ID 也不会轻易断开
+            if let lastDist = tracked.stableDistance, lastDist < 3.5 {
+                allowedMissed = 10
+            }
+            
+            return tracked.missedFrames > allowedMissed
+        }
     }
     
     // 计算两个矩形的 IoU（Intersection over Union，交并比）

@@ -33,6 +33,29 @@ import ARKit
 // 两个入口：
 //   update(with:) — 每帧调用，处理焦点管理、首报、方位变化、阈值跨越、紧急警告
 //   handleStep()  — 每走一步调用，处理倒数模式下的数字播报
+//
+// 两种反馈模式（用于 user study 对比实验）：
+//
+// 步数模式（gait-adaptive，实验组）：
+//   以上"倒车雷达"模型的完整实现。
+//   核心特征：近距离时步伐同步倒数，节奏跟用户脚步绑定。
+//
+// 米数模式（传统基线，对照组）：
+//   首次发现时完整播报一次（"chair, 12 o'clock, 3.2 meters"）。
+//   之后只在距离跨过关键阈值时简短更新（3m → 2m → 1m）。
+//   不做步伐同步倒数，不和加速度计联动。
+//
+//   这样实验比较的是"步态自适应反馈 vs 传统距离反馈"，
+//   而不是"同一套机制换个单位念"。
+//
+// 典型播报流程（米数模式，用户向 5m 外的椅子走去）：
+//   "chair, 12 o'clock, 5 meters"   ← 首次发现
+//   "chair, 3 meters"               ← 跨过 3m 阈值
+//   "chair, 2 meters"               ← 跨过 2m 阈值
+//   "chair, 1 meter"                ← 跨过 1m 阈值
+//   "Arrived"                        ← 距离 < 0.5m
+//
+// 全程 5 句话，没有倒数，没有步伐同步。和传统导航系统的行为一致。
 class FeedbackManager {
     
     // 语音引擎：负责实际的 TTS 播报
@@ -42,14 +65,20 @@ class FeedbackManager {
     // weak 防止循环引用
     private weak var stepConverter: StepConverter?
     
+    // 反馈距离单位：步数 or 米数
+    var distanceMode: FeedbackDistanceMode
+    
     // =====================================================================
     // 漏斗状态：一次只聚焦一个物体
     // =====================================================================
     
     // 当前聚焦的物体 ID
-    // 只有这个物体的距离/方位变化才会触发播报
+    // 只有 this 物体的距离/方位变化才会触发播报
     // 其他物体暂时忽略，等这个被绕过或消失后再轮到下一个
     private var focusedObjectID: UUID? = nil
+    
+    // 新增：当前聚焦物体的标签名，用于 ID 丢失后的元数据匹配
+    private var focusedObjectLabel: String? = nil
     
     // 聚焦物体上次播报时的步数
     // 用于判断是否跨过了阈值
@@ -67,6 +96,15 @@ class FeedbackManager {
     // handleStep() 比较这两个值：如果 focusedCurrentSteps < lastAnnouncedSteps → 该报数字了
     private var focusedCurrentSteps: Int? = nil
     
+    // 聚焦物体的实时距离（米），由 update() 每帧刷新
+    // 步数模式下仅用于内部跟踪；米数模式下用于阈值判断和语音文案
+    private var focusedCurrentDistance: Float? = nil
+    
+    // 米数模式下：上次播报时的原始距离（米）
+    // 用于判断是否跨过了距离阈值
+    // 步数模式下不使用
+    private var lastAnnouncedDistance: Float? = nil
+    
     // =====================================================================
     // 帧间比较：检测"突然出现"的物体
     // =====================================================================
@@ -76,13 +114,13 @@ class FeedbackManager {
     private var previousIDs: Set<UUID> = []
     
     // =====================================================================
-    // 阈值 & 倒数配置
+    // 步数模式阈值 & 倒数配置
     // =====================================================================
     
     // 远距离阈值：步数 > countdownThreshold 时，只在跨过这些值时播报
-    // 比如 10 步 → 跨过 7 → 播报 "chair, 7 steps"
+    // 比如 9 步 → 跨过 7 → 播报 "chair, 7 steps"
     // 不包含 5，因为 5 是倒数模式的入口，由倒数逻辑处理
-    private let stepThresholds: [Int] = [7]
+    private let stepThresholds: [Int] = [10, 7]
     
     // 倒数模式入口：步数从上方跨过这个值时，进入倒数模式
     // 进入后只说数字（"5", "4", "3", "2"），每减 1 步报一次
@@ -103,6 +141,19 @@ class FeedbackManager {
     private let suddenAppearanceThreshold = 3
     
     // =====================================================================
+    // 米数模式阈值
+    // =====================================================================
+    
+    // 距离阈值（米），从远到近排列
+    // 用户接近物体时，每跨过一个阈值播报一次简短更新
+    // 首报时的完整信息由焦点获取逻辑处理，这里只管后续的阈值更新
+    private let meterThresholds: [Float] = [10.0, 5.0, 3.0, 2.0, 1.0]
+    
+    // 紧急距离（米）
+    // 低于此距离 → 播报 "Arrived"
+    private let urgentMeterThreshold: Float = 0.5
+    
+    // =====================================================================
     // 过滤配置
     // =====================================================================
     
@@ -116,13 +167,23 @@ class FeedbackManager {
     private let sideIgnoreSteps = 5
     
     // =====================================================================
-    // 焦点释放
+    // 焦点释放 & 失去焦点的元数据
     // =====================================================================
     
     // 步数比上次播报增加超过这个值 → 释放焦点
     // 步数增加说明用户正在远离这个物体（走过了、转向了、或者物体自己移开了）
     // 释放焦点后，系统会自动选下一个最近的物体
     private let releaseStepIncrease = 3
+    
+    // 记录最近一次失去焦点的元数据
+    private var lastFocusMetadata: (
+        label: String,
+        steps: Int,
+        direction: String?,
+        distance: Float?,
+        time: Date,
+        lastAnnouncedTime: Date
+    )? = nil
     
     // =====================================================================
     // 防抖
@@ -159,6 +220,7 @@ class FeedbackManager {
     // 只在 FeedbackManager 内部使用
     private struct Candidate {
         let detection: Detection
+        let distance: Float
         let steps: Int
         // 时钟方位（"12 o'clock"）
         let direction: String
@@ -168,9 +230,10 @@ class FeedbackManager {
         let isNew: Bool
     }
     
-    init(speech: SpeechManager, stepConverter: StepConverter) {
+    init(speech: SpeechManager, stepConverter: StepConverter, distanceMode: FeedbackDistanceMode = .steps) {
         self.speech = speech
         self.stepConverter = stepConverter
+        self.distanceMode = distanceMode
     }
     
     // 接收最新的检测结果，决定是否需要播报
@@ -211,13 +274,15 @@ class FeedbackManager {
                 
                 return Candidate(
                     detection: detection,
+                    distance: distance,
                     steps: steps,
                     direction: direction,
                     isCenter: isCenter,
                     isNew: isNew
                 )
             }
-            .sorted { $0.steps < $1.steps }  // 最近的排前面
+            // 最近的排前面
+            .sorted { $0.steps < $1.steps }
         
         // =================================================================
         // 第二步：检查聚焦物体是否还有效
@@ -280,9 +345,12 @@ class FeedbackManager {
                 
                 // 切换焦点到这个物体
                 focusedObjectID = candidate.detection.id
+                focusedObjectLabel = candidate.detection.label
                 lastAnnouncedSteps = candidate.steps
                 lastAnnouncedDirection = candidate.direction
                 focusedCurrentSteps = candidate.steps
+                focusedCurrentDistance = candidate.distance
+                lastAnnouncedDistance = candidate.distance
                 lastAnnouncementTime = now
                 
                 previousIDs = currentIDs
@@ -296,27 +364,54 @@ class FeedbackManager {
         
         if focusedObjectID == nil {
             
-            // 选择策略：
-            //   优先选路径中央最近的物体（最挡路的那个）
-            //   如果中央没有，选侧边但很近（3 步以内）的物体
-            //   如果都没有，保持安静（前方一片空旷，不需要播报）
-            let best = candidates.first(where: { $0.isCenter })
-                ?? candidates.first(where: { $0.steps <= 3 })
+            // 策略：优先寻找匹配刚丢失焦点的“新”物体，防止 ID 闪烁打断
+            if let metadata = lastFocusMetadata, now.timeIntervalSince(metadata.time) < 1.0 {
+                if let recovered = candidates.first(where: {
+                    $0.detection.label == metadata.label &&
+                    abs($0.steps - metadata.steps) <= 2
+                }) {
+                    focusedObjectID = recovered.detection.id
+                    focusedObjectLabel = recovered.detection.label
+                    
+                    // 状态全量继承
+                    lastAnnouncedSteps = metadata.steps
+                    lastAnnouncedDirection = metadata.direction
+                    lastAnnouncedDistance = metadata.distance
+                    lastAnnouncementTime = metadata.lastAnnouncedTime
+                    
+                    // 匹配成功，清除记忆
+                    lastFocusMetadata = nil
+                    // 匹配成功后直接进入第五步更新状态，不进行首报
+                }
+            }
             
-            if let candidate = best {
-                // 首次播报：完整信息（物体名 + 方位 + 步数）
-                // 建立用户的空间映射
-                let text = buildFullText(candidate)
-                speech.speak(text)
+            // 如果上述匹配失败，则按常规逻辑选一个
+            if focusedObjectID == nil {
+                // 选择策略：
+                //   优先选路径中央最近的物体（最挡路的那个）
+                //   如果中央没有，选侧边但很近（3 步以内）的物体
+                //   如果都没有，保持安静（前方一片空旷，不需要播报）
+                let best = candidates.first(where: { $0.isCenter })
+                    ?? candidates.first(where: { $0.steps <= 3 })
                 
-                focusedObjectID = candidate.detection.id
-                lastAnnouncedSteps = candidate.steps
-                lastAnnouncedDirection = candidate.direction
-                focusedCurrentSteps = candidate.steps
-                lastAnnouncementTime = now
-                
-                previousIDs = currentIDs
-                return
+                if let candidate = best {
+                    // 首次播报：完整信息（物体名 + 方位 + 步数）
+                    // 建立用户的空间映射
+                    let text = buildFullText(candidate)
+                    speech.speak(text)
+                    
+                    focusedObjectID = candidate.detection.id
+                    focusedObjectLabel = candidate.detection.label
+                    lastAnnouncedSteps = candidate.steps
+                    lastAnnouncedDirection = candidate.direction
+                    focusedCurrentSteps = candidate.steps
+                    focusedCurrentDistance = candidate.distance
+                    lastAnnouncedDistance = candidate.distance
+                    lastAnnouncementTime = now
+                    
+                    previousIDs = currentIDs
+                    return
+                }
             }
         }
         
@@ -343,6 +438,18 @@ class FeedbackManager {
             // 每帧刷新实时步数，供 handleStep() 读取
             // 这是 update() 和 handleStep() 之间的数据桥梁
             focusedCurrentSteps = steps
+            focusedCurrentDistance = candidate.distance
+            
+            // 米数模式：
+            //   只看距离阈值：跨过 10m/5m/3m/2m/1m 时简短更新，< 0.5m 时说 Arrived
+            //   所有播报由画面帧的距离变化驱动，和用户步伐无关
+            if distanceMode == .meters {
+                updateFocusedMetersMode(candidate: candidate, direction: direction, now: now)
+                previousIDs = currentIDs
+                return
+            }
+            
+            // 步数模式：
             
             // "是否在倒数模式"以 lastAnnouncedSteps 为准：
             // 只要语音已经说过 5 或更小，就认为用户正在听倒数。
@@ -437,6 +544,11 @@ class FeedbackManager {
     //   用户停下 → 倒数暂停（没有步伐事件触发）
     func handleStep(with detections: [Detection]) {
         
+        // 米数模式不做步伐同步倒数
+        // 所有播报由 update() 里的距离阈值驱动
+        // 这是和步数模式最本质的区别：步伐事件不触发语音
+        if distanceMode == .meters { return }
+        
         // 这代表"主路"事件：加速度计已经确认用户迈了一步。
         // 记录时间后，视觉兜底会短暂让路，避免同一步被说两次。
         lastConfirmedStepTime = Date()
@@ -494,6 +606,10 @@ class FeedbackManager {
     //   2. 只在 currentSteps 真的比 lastAnnouncedSteps 小时播报，避免距离抖动。
     //   3. 只说短数字或 Arrived，不说完整物体句。
     private func tryVisualCountdownFallback(now: Date, isConfirmedStepUpdate: Bool) -> Bool {
+        
+        // 米数模式没有倒数机制，不需要视觉兜底
+        if distanceMode == .meters { return false }
+        
         guard let currentSteps = focusedCurrentSteps else { return false }
         guard let lastSteps = lastAnnouncedSteps else { return false }
         
@@ -532,6 +648,9 @@ class FeedbackManager {
     // - focusedCurrentSteps <= 5：画面已经进入近距离，即使语音还没来得及说 5
     // 这样可以更早压制完整句，保护倒数体验。
     private var isCountdownActive: Bool {
+        // 米数模式没有倒数概念，永远返回 false
+        if distanceMode == .meters { return false }
+        
         if let lastSteps = lastAnnouncedSteps, lastSteps <= countdownThreshold {
             return true
         }
@@ -551,16 +670,91 @@ class FeedbackManager {
     }
     
     // =====================================================================
+    // 米数模式：聚焦物体更新逻辑
+    // =====================================================================
+    
+    // 由 update() 第五步在 distanceMode == .meters 时调用
+    // 紧急距离 → 方位变化 → 距离阈值
+    // 所有播报纯粹由 LiDAR 距离的阈值跨越驱动
+    private func updateFocusedMetersMode(candidate: Candidate, direction: String, now: Date) {
+        
+        let currentDistance = candidate.distance
+        
+        // 紧急距离（< 0.5m）：立刻播报 Arrived
+        // 不受防抖限制，因为用户可能没在走路（物体在靠近用户）
+        if currentDistance <= urgentMeterThreshold,
+           let lastDist = lastAnnouncedDistance,
+           lastDist > urgentMeterThreshold {
+            speech.speakInterrupting(finalCountdownText)
+            lastAnnouncedDistance = currentDistance
+            lastAnnouncedSteps = candidate.steps
+            lastAnnouncementTime = now
+            return
+        }
+        
+        // 防抖
+        guard now.timeIntervalSince(lastAnnouncementTime) >= minAnnouncementInterval else { return }
+        
+        // 方位变化
+        if direction != lastAnnouncedDirection {
+            let text = "\(candidate.detection.label), \(direction)"
+            speech.speak(text)
+            lastAnnouncedDirection = direction
+            lastAnnouncedSteps = candidate.steps
+            lastAnnouncedDistance = currentDistance
+            lastAnnouncementTime = now
+            return
+        }
+        
+        // 距离阈值跨越
+        // 从 meterThresholds 中找到刚被跨过的最大阈值
+        // 当我们在 3.5m 首报后，lastAnnouncedDistance = 3.5m
+        // 距离降到 2.8m 时：
+        //   3.0m：3.5 > 3.0 且 2.8 <= 3.0 → 匹配！播报，lastAnnouncedDistance = 2.8m
+        // 距离降到 1.9m 时：
+        //   3.0m：2.8 > 3.0？不满足 → 跳过（3m 阈值不会再触发）
+        //   2.0m：2.8 > 2.0 且 1.9 <= 2.0 → 匹配！播报，lastAnnouncedDistance = 1.9m
+        if let _ = meterThresholds.first(where: { threshold in
+            (lastAnnouncedDistance ?? Float.greatestFiniteMagnitude) > threshold
+                && currentDistance <= threshold
+        }) {
+            let text = buildBriefText(candidate)
+            speech.speak(text)
+            lastAnnouncedSteps = candidate.steps
+            lastAnnouncedDistance = currentDistance
+            lastAnnouncementTime = now
+        }
+    }
+    
+    // =====================================================================
     // 焦点管理
     // =====================================================================
     
     // 释放当前聚焦的物体
     // 下一帧 update 时，第四步会自动选一个新的物体
     private func releaseFocus() {
+        
+        // 在清空前保存快照，用于匹配可能由于 ID 重置而产生的“新”物体
+        if let label = focusedObjectLabel, let steps = lastAnnouncedSteps {
+            lastFocusMetadata = (
+                    label: label,
+                    steps: steps,
+                    direction: lastAnnouncedDirection,
+                    distance: lastAnnouncedDistance,
+                    // 消失的时间
+                    time: Date(),
+                    // 继承冷却时间
+                    lastAnnouncedTime: lastAnnouncementTime
+                )
+            }
+        
         focusedObjectID = nil
+        focusedObjectLabel = nil
         lastAnnouncedSteps = nil
         lastAnnouncedDirection = nil
         focusedCurrentSteps = nil
+        focusedCurrentDistance = nil
+        lastAnnouncedDistance = nil
     }
     
     // =====================================================================
@@ -598,24 +792,21 @@ class FeedbackManager {
     // 用于首次发现物体时，建立用户的空间映射
     // 示例："chair, 12 o'clock, 7 steps"
     private func buildFullText(_ candidate: Candidate) -> String {
-        let stepWord = candidate.steps == 1 ? "step" : "steps"
-        return "\(candidate.detection.label), \(candidate.direction), \(candidate.steps) \(stepWord)"
+        return "\(candidate.detection.label), \(candidate.direction), \(formatDistance(candidate))"
     }
     
     // 简短播报：物体名 + 步数（省略方位）
     // 用于步数阈值更新，用户已经知道方位了，只需要更新距离
     // 示例："chair, 3 steps"
     private func buildBriefText(_ candidate: Candidate) -> String {
-        let stepWord = candidate.steps == 1 ? "step" : "steps"
-        return "\(candidate.detection.label), \(candidate.steps) \(stepWord)"
+        return "\(candidate.detection.label), \(formatDistance(candidate))"
     }
     
     // 紧急播报：warning + 物体名 + 方位 + 步数
     // 用于物体进入 1 步危险范围，或突然出现的近距离威胁
     // 示例："warning, chair, 12 o'clock, 1 step"
     private func buildUrgentText(_ candidate: Candidate) -> String {
-        let stepWord = candidate.steps == 1 ? "step" : "steps"
-        return "warning, \(candidate.detection.label), \(candidate.direction), \(candidate.steps) \(stepWord)"
+        return "warning, \(candidate.detection.label), \(candidate.direction), \(formatDistance(candidate))"
     }
     
     // 修正播报：动态步长发生明显变化时使用
@@ -623,5 +814,24 @@ class FeedbackManager {
     private func buildCorrectionText(steps: Int) -> String {
         let stepWord = steps == 1 ? "step" : "steps"
         return "about \(steps) \(stepWord)"
+    }
+    
+    // =====================================================================
+    // 距离格式化（根据当前模式返回步数或米数文本）
+    // =====================================================================
+    
+    // 统一的距离文本生成器
+    // 步数模式 → "7 steps"、"1 step"
+    // 米数模式 → "3 meters"、"1.5 meters"、"1 meter"
+    private func formatDistance(_ candidate: Candidate) -> String {
+        switch distanceMode {
+        case .steps:
+            let stepWord = candidate.steps == 1 ? "step" : "steps"
+            return "\(candidate.steps) \(stepWord)"
+        case .meters:
+            let rounded = (candidate.distance * 10).rounded() / 10
+            let meterWord = rounded == 1.0 ? "meter" : "meters"
+            return "\(String(format: "%.1f", rounded)) \(meterWord)"
+        }
     }
 }
