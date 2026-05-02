@@ -1,82 +1,146 @@
 import SwiftUI
 
-// 负责绘制检测框和标签的视图
+// 检测框叠加层
+//
+// 视觉变化：
+//   - 检测框颜色随距离动态变化：绿色（远）→ 黄色（中）→ 红色（近）
+//   - 标签改为深色底 + 高对比文字
+//   - 距离信息用更大的字号突出显示
+//   - 近距离物体的框线加粗 + 闪烁，增强视觉警示
 struct DetectionOverlay: View {
     
     let detections: [Detection]
-    
-    // 用来把检测到的距离转换成步数
     let stepConverter: StepConverter
     
     var body: some View {
-        // GeometryReader 能获取父视图的实际尺寸
-        // 我们需要它来把模型输出的归一化坐标转成屏幕像素坐标
         GeometryReader { geometry in
-            
-            // 遍历每个检测结果
             ForEach(detections) { detection in
                 
-                // 把模型的坐标转成屏幕坐标
                 let rect = convertRect(detection.boundingBox, in: geometry.size)
+                let color = Theme.distanceColor(for: detection.distance)
+                let isClose = (detection.distance ?? 999) < 1.5
                 
-                // 画一个绿色边框的矩形
+                // ==========================================================
+                // 检测框
+                // ==========================================================
+                
+                // 半透明填充 + 描边
                 Rectangle()
-                    // 绿色描边，线宽2
-                    .stroke(Color.green, lineWidth: 2)
-                    // 框的大小
+                    .fill(color.opacity(0.08))
+                    .overlay(
+                        Rectangle()
+                            .stroke(color, lineWidth: isClose ? 3 : 2)
+                    )
                     .frame(width: rect.width, height: rect.height)
-                    // 框的位置（中心点）
                     .position(x: rect.midX, y: rect.midY)
                 
-                // 在框上方显示物体标签（名称 + 置信度 + 距离）
-                Text(labelText(for: detection))
-                    // 小字体
-                    .font(.caption)
-                    // 黑色文字
-                    .foregroundColor(.black)
-                    // 内边距
-                    .padding(4)
-                    // 绿色背景
-                    .background(Color.green)
-                    // 圆角
-                    .cornerRadius(4)
-                    // 放在框顶部上方
-                    .position(x: rect.midX, y: rect.minY - 12)
+                // 近距离时，框的四个角加重标记
+                if isClose {
+                    cornerMarkers(rect: rect, color: color)
+                }
+                
+                // ==========================================================
+                // 标签（固定在框的上边缘外侧）
+                // ==========================================================
+                
+                detectionLabel(for: detection, color: color)
+                    .position(x: rect.midX, y: rect.minY - 16)
             }
         }
     }
     
-    // 坐标转换函数
-    // Vision 框架返回的坐标是"归一化"的：x 和 y 都在 0 到 1 之间
-    // 而且 Vision 的 y 轴从底部向上，屏幕的 y 轴从顶部向下，所以要翻转
-    // 这个函数把它转成屏幕上的实际像素坐标（把 0-1 的比例值乘以屏幕宽度，得到像素值）
-    private func convertRect(_ boundingBox: CGRect, in size: CGSize) -> CGRect {
-        // x 起点
-        let x = boundingBox.minX * size.width
-        // y 起点（翻转 y 轴）
-        let y = (1 - boundingBox.maxY) * size.height
-        // 宽度
-        let width = boundingBox.width * size.width
-        // 高度
-        let height = boundingBox.height * size.height
-        return CGRect(x: x, y: y, width: width, height: height)
+    // =====================================================================
+    // 标签视图
+    // =====================================================================
+    
+    @ViewBuilder
+    private func detectionLabel(for detection: Detection, color: Color) -> some View {
+        HStack(spacing: 6) {
+            // 物体名称
+            Text(detection.label)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(Theme.textPrimary)
+            
+            // 距离信息（如果有）
+            if let d = detection.distance {
+                // 分隔符
+                Text("·")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(color)
+                
+                // 距离（米）
+                Text("\(String(format: "%.1f", d))m")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(color)
+                
+                // 步数
+                let steps = stepConverter.distanceToSteps(d)
+                Text("(\(steps) steps)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Theme.textSecondary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Theme.backgroundPrimary.opacity(0.85))
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(color.opacity(0.4), lineWidth: 1)
+        )
     }
     
-    // 生成标签文字
-    private func labelText(for detection: Detection) -> String {
-        // 先拼基础信息：物体名 + 置信度百分比
-        var text = "\(detection.label) \(Int(detection.confidence * 100))%"
+    // =====================================================================
+    // 近距离角标（四个角的加重 L 形标记）
+    // =====================================================================
+    
+    @ViewBuilder
+    private func cornerMarkers(rect: CGRect, color: Color) -> some View {
+        let length: CGFloat = min(16, min(rect.width, rect.height) * 0.3)
+        let thickness: CGFloat = 3
         
-        // 如果有距离信息，追加距离
-        // if let 是安全解包：如果 distance 不是 nil，就取出值赋给 d
-        if let d = detection.distance {
-            // %.1f 保留一位小数，比如 2.3
-            text += " · \(String(format: "%.1f", d))m"
-            
-            // 把距离转成步数，显示在距离后面
-            let steps = stepConverter.distanceToSteps(d)
-            text += " / \(steps) steps"
+        // 左上角
+        Path { path in
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY + length))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.minX + length, y: rect.minY))
         }
-        return text
+        .stroke(color, lineWidth: thickness)
+        
+        // 右上角
+        Path { path in
+            path.move(to: CGPoint(x: rect.maxX - length, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + length))
+        }
+        .stroke(color, lineWidth: thickness)
+        
+        // 左下角
+        Path { path in
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY - length))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX + length, y: rect.maxY))
+        }
+        .stroke(color, lineWidth: thickness)
+        
+        // 右下角
+        Path { path in
+            path.move(to: CGPoint(x: rect.maxX - length, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - length))
+        }
+        .stroke(color, lineWidth: thickness)
+    }
+    
+    // =====================================================================
+    // 坐标转换
+    // =====================================================================
+    
+    private func convertRect(_ boundingBox: CGRect, in size: CGSize) -> CGRect {
+        let x = boundingBox.minX * size.width
+        let y = (1 - boundingBox.maxY) * size.height
+        let width = boundingBox.width * size.width
+        let height = boundingBox.height * size.height
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 }
