@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var showCalibration = false
     @State private var showSettings = false
     @State private var feedbackDistanceMode = FeedbackDistanceMode.saved
+    @State private var isCameraReady = false
     
     private let speech = SpeechManager()
     @State private var feedbackManager: FeedbackManager? = nil
@@ -33,30 +34,35 @@ struct ContentView: View {
             // 上层：导航 HUD
             // =============================================================
             
-            VStack(spacing: 0) {
-                
-                // ---------------------------------------------------------
-                // 顶部工具栏
-                // ---------------------------------------------------------
-                topBar
-                
-                Spacer()
-                
-                // ---------------------------------------------------------
-                // 底部状态面板
-                // ---------------------------------------------------------
-                bottomPanel
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    
+                    // ---------------------------------------------------------
+                    // 顶部工具栏
+                    // ---------------------------------------------------------
+                    topBar
+                    
+                    Spacer()
+                    
+                    // ---------------------------------------------------------
+                    // 底部状态面板
+                    // ---------------------------------------------------------
+                    bottomPanel(bottomInset: geo.safeAreaInsets.bottom)
+                }
+                .ignoresSafeArea(edges: .bottom)
             }
         }
         .onAppear {
             stepConverter.setARSession(camera.session)
             stepConverter.start()
             
+            // 播报"准备中"
+            speech.speak("Preparing")
+            
             let fm = FeedbackManager(speech: speech, stepConverter: stepConverter, distanceMode: feedbackDistanceMode)
             feedbackManager = fm
             
             stepConverter.onStepDetected = { [self] in
-                // 标定页面打开期间不做语音反馈
                 guard !showCalibration else { return }
                 fm.handleStep(with: camera.detections)
             }
@@ -64,6 +70,14 @@ struct ContentView: View {
         .onDisappear {
             stepConverter.stop()
             speech.stop()
+        }
+        .onReceive(camera.$fps) { fps in
+            // 当 fps > 0 说明摄像头已经开始出帧，撤掉加载动画
+            if fps > 0 && !isCameraReady {
+                withAnimation(.easeOut(duration: 0.5)) {
+                    isCameraReady = true
+                }
+            }
         }
         .onReceive(camera.$detections) { detections in
             guard !showCalibration else { return }
@@ -93,6 +107,24 @@ struct ContentView: View {
                 }
             )
         }
+        // 加载动画覆盖层
+        .overlay {
+            if !isCameraReady {
+                ZStack {
+                    Color.black
+                        .ignoresSafeArea()
+                    VStack(spacing: 24) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        Text("Preparing ...")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
         // 强制深色模式
         .preferredColorScheme(.dark)
     }
@@ -104,18 +136,38 @@ struct ContentView: View {
     private var topBar: some View {
         HStack(spacing: 12) {
             
-            // 步长指示器（点击进入标定）
-            Button(action: { showCalibration = true }) {
+            // 步长指示器（仅展示，通过设置页标定）
+            HStack(spacing: 6) {
+                // 动态步长激活时显示脉动圆点
+                if stepConverter.isDynamicActive {
+                    Circle()
+                        .fill(Theme.safe)
+                        .frame(width: 8, height: 8)
+                }
+                
+                Text(stepLengthLabel)
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Theme.textPrimary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Theme.backgroundCard.opacity(0.9))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Theme.border, lineWidth: 1)
+            )
+            
+            Spacer()
+            
+            // 设置按钮
+            Button(action: { showSettings = true }) {
                 HStack(spacing: 6) {
-                    // 动态步长激活时显示脉动圆点
-                    if stepConverter.isDynamicActive {
-                        Circle()
-                            .fill(Theme.safe)
-                            .frame(width: 8, height: 8)
-                    }
-                    
-                    Text(stepLengthLabel)
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Settings")
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Theme.textPrimary)
                 }
                 .padding(.horizontal, 14)
@@ -127,22 +179,6 @@ struct ContentView: View {
                         .stroke(Theme.border, lineWidth: 1)
                 )
             }
-            
-            Spacer()
-            
-            // 设置按钮
-            Button(action: { showSettings = true }) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(Theme.textPrimary)
-                    .frame(width: 40, height: 40)
-                    .background(Theme.backgroundCard.opacity(0.9))
-                    .clipShape(Circle())
-                    .overlay(
-                        Circle()
-                            .stroke(Theme.border, lineWidth: 1)
-                    )
-            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -152,31 +188,28 @@ struct ContentView: View {
     // 底部状态面板
     // =====================================================================
     
-    private var bottomPanel: some View {
-        VStack(spacing: 12) {
+    private func bottomPanel(bottomInset: CGFloat) -> some View {
+        VStack(spacing: 10) {
             
-            // 反馈模式切换（Steps / Meters）
-            Picker("Feedback distance", selection: $feedbackDistanceMode) {
-                ForEach(FeedbackDistanceMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
+            // 当前反馈模式指示
+            HStack(spacing: 6) {
+                Image(systemName: feedbackDistanceMode == .steps ? "figure.walk" : "ruler")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white)
+                Text(feedbackDistanceMode.label)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Theme.textPrimary)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 200)
             
             // 状态信息栏
             HStack(spacing: 16) {
                 // 检测数量
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Image(systemName: "eye.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(
-                            camera.detections.isEmpty
-                            ? Theme.textSecondary
-                            : Theme.safe
-                        )
+                        .font(.system(size: 14))
+                        .foregroundColor(.white)
                     Text("\(camera.detections.count)")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .font(.system(size: 16, weight: .bold, design: .monospaced))
                         .foregroundColor(Theme.textPrimary)
                 }
                 
@@ -187,12 +220,13 @@ struct ContentView: View {
                 
                 // FPS
                 Text("\(String(format: "%.0f", camera.fps)) FPS")
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .font(.system(size: 16, weight: .medium, design: .monospaced))
                     .foregroundColor(Theme.textSecondary)
             }
         }
-        .padding(.vertical, 16)
+        .padding(.top, 16)
         .padding(.horizontal, 24)
+        .padding(.bottom, max(bottomInset, 16))
         .frame(maxWidth: .infinity)
         .background(
             Theme.backgroundPrimary.opacity(0.85)
@@ -212,10 +246,7 @@ struct ContentView: View {
     
     private var stepLengthLabel: String {
         let value = String(format: "%.2f", stepConverter.effectiveStepLength)
-        if stepConverter.isDynamicActive {
-            return "\(value) m/s"
-        }
-        return "\(value) m/s"
+        return "\(value) m/step"
     }
 }
 
