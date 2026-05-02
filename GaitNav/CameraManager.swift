@@ -23,8 +23,9 @@ class CameraManager: NSObject, ObservableObject {
     // 每次检测完成，新的结果会写入这里，界面上的框就会更新
     @Published var detections: [Detection] = []
     
-    // 检测器
-    private let detector = Detector()
+    // 检测器（延迟加载，避免阻塞主线程）
+    // ML 模型加载耗时较长，放到 start() 中在后台线程初始化
+    private var detector: Detector?
     
     // 距离估算器：利用 LiDAR 深度图计算物体到相机的水平距离
     private let distanceEstimator = DistanceEstimator()
@@ -44,12 +45,20 @@ class CameraManager: NSObject, ObservableObject {
     // Date() 表示"现在这一刻"
     private var lastFPSUpdate = Date()
     
-    // 构造函数，对象创建时自动执行
-    override init() {
-        // 调用父类构造函数
-        super.init()
-        // 配置+启动 AR 会话
+    // 启动 AR 会话，由外部在界面准备好后调用
+    func start() {
+        // 1. 先启动 AR 会话（非阻塞，摄像头很快就能出画面）
         startSession()
+        
+        // 2. 在后台线程加载 ML 检测模型（耗时操作）
+        //    加载完成前，帧回调会跳过检测步骤
+        //    加载完成后，检测自动开始，FPS 更新，加载页面消失
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let loadedDetector = Detector()
+            DispatchQueue.main.async {
+                self?.detector = loadedDetector
+            }
+        }
     }
     
     private func startSession() {
@@ -96,6 +105,10 @@ extension CameraManager: ARSessionDelegate {
         
         // 如果上一帧还没处理完，跳过这帧（避免堆积）
         guard !isProcessing else { return }
+        
+        // 检测器还没加载完成，跳过（ML 模型正在后台线程初始化）
+        guard let detector = self.detector else { return }
+        
         // 标记为正在处理
         isProcessing = true
         

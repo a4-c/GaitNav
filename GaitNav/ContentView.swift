@@ -53,11 +53,18 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            stepConverter.setARSession(camera.session)
-            stepConverter.start()
-            
             // 播报"准备中"
             speech.speak("Preparing")
+            
+            // camera.start() 现在是非阻塞的：
+            //   - AR 会话立刻启动（快）
+            //   - ML 检测模型在后台线程加载（慢，但不阻塞主线程）
+            //   - 加载完成前，帧数据会被跳过
+            //   - 加载完成后，自动开始检测，FPS > 0，加载页面消失
+            camera.start()
+            
+            stepConverter.setARSession(camera.session)
+            stepConverter.start()
             
             let fm = FeedbackManager(speech: speech, stepConverter: stepConverter, distanceMode: feedbackDistanceMode)
             feedbackManager = fm
@@ -196,7 +203,7 @@ struct ContentView: View {
                 Image(systemName: feedbackDistanceMode == .steps ? "figure.walk" : "ruler")
                     .font(.system(size: 14))
                     .foregroundColor(.white)
-                Text(feedbackDistanceMode.label)
+                Text("\(feedbackDistanceMode.label) Mode")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(Theme.textPrimary)
             }
@@ -207,7 +214,7 @@ struct ContentView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "eye.fill")
                         .font(.system(size: 14))
-                        .foregroundColor(.white)
+                        .foregroundColor(Theme.safe)
                     Text("\(camera.detections.count)")
                         .font(.system(size: 16, weight: .bold, design: .monospaced))
                         .foregroundColor(Theme.textPrimary)
