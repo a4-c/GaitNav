@@ -46,10 +46,12 @@ struct CalibrationView: View {
                         }
                         
                         // =================================================
-                        // 状态信息卡片
+                        // 状态信息卡片（标定完成后隐藏，因为结果卡片已包含信息）
                         // =================================================
                         
-                        statusCard
+                        if calibrator.calibratedStepLength == nil {
+                            statusCard
+                        }
                         
                         // =================================================
                         // 标定结果卡片
@@ -219,31 +221,39 @@ struct CalibrationView: View {
     private var resultCard: some View {
         if let stepLength = calibrator.calibratedStepLength,
            let distance = calibrator.calibrationDistance {
-            VStack(spacing: 16) {
-                // 结果标题
-                HStack {
-                    Image(systemName: "checkmark.seal.fill")
+            VStack(spacing: 10) {
+                
+                // ========== 卡片 1：标定完成提示（荧光绿边框） ==========
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 22, weight: .medium))
                         .foregroundColor(Theme.safe)
                     Text("Calibration Complete")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 18, weight: .bold))
                         .foregroundColor(Theme.safe)
-                    Spacer()
                 }
+                .frame(maxWidth: .infinity)
+                .padding(16)
+                .background(Theme.backgroundCard)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                        .stroke(Theme.safe.opacity(0.3), lineWidth: 1.5)
+                )
                 
-                // 数据行
-                HStack(spacing: 0) {
-                    resultMetric(
+                // ========== 卡片 2：数据详情（普通边框） ==========
+                VStack(spacing: 18) {
+                    resultRow(
                         value: String(format: "%.1f", distance),
                         unit: "m",
                         label: "Distance"
                     )
                     
-                    // 垂直分隔线
                     Rectangle()
                         .fill(Theme.divider)
-                        .frame(width: 1, height: 40)
+                        .frame(height: 1)
                     
-                    resultMetric(
+                    resultRow(
                         value: "\(calibrator.calibrationSteps)",
                         unit: "",
                         label: "Steps"
@@ -251,45 +261,45 @@ struct CalibrationView: View {
                     
                     Rectangle()
                         .fill(Theme.divider)
-                        .frame(width: 1, height: 40)
+                        .frame(height: 1)
                     
-                    resultMetric(
+                    resultRow(
                         value: String(format: "%.2f", stepLength),
                         unit: "m",
                         label: "Step Length"
                     )
                 }
+                .padding(20)
+                .background(Theme.backgroundCard)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                        .stroke(Theme.border, lineWidth: 1)
+                )
             }
-            .padding(20)
-            .background(Theme.backgroundCard)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
-                    .stroke(Theme.safe.opacity(0.3), lineWidth: 1.5)
-            )
         }
     }
     
-    // 结果指标单元
-    private func resultMetric(value: String, unit: String, label: String) -> some View {
+    // 结果指标：标签在上（小字），数值在下（大字），居中
+    private func resultRow(value: String, unit: String, label: String) -> some View {
         VStack(spacing: 4) {
-            HStack(spacing: 2) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Theme.textDisabled)
+                .textCase(.uppercase)
+                .tracking(1.5)
+            
+            HStack(spacing: 3) {
                 Text(value)
-                    .font(.system(size: 22, weight: .bold, design: .monospaced))
+                    .font(.system(size: 30, weight: .bold, design: .monospaced))
                     .foregroundColor(Theme.textPrimary)
                 
                 if !unit.isEmpty {
                     Text(unit)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundColor(Theme.textSecondary)
                 }
             }
-            
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(Theme.textDisabled)
-                .textCase(.uppercase)
-                .tracking(1)
         }
         .frame(maxWidth: .infinity)
     }
