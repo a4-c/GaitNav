@@ -9,6 +9,9 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var feedbackDistanceMode = FeedbackDistanceMode.saved
     @State private var isCameraReady = false
+    @State private var isNavigationStarted = false
+    @State private var isFeedbackActive = false
+    @State private var isPaused = false
     
     private let speech = SpeechManager()
     @State private var feedbackManager: FeedbackManager? = nil
@@ -24,43 +27,46 @@ struct ContentView: View {
                 .ignoresSafeArea()
             
             // =============================================================
-            // 中层：检测框叠加层（使用新的主题色系）
+            // 中层：检测框叠加层
             // =============================================================
             
             DetectionOverlay(detections: camera.detections, stepConverter: stepConverter)
                 .ignoresSafeArea()
             
             // =============================================================
-            // 上层：导航 HUD
+            // 上层：导航 HUD（导航开始后才显示）
             // =============================================================
             
-            GeometryReader { geo in
-                VStack(spacing: 0) {
-                    
-                    // ---------------------------------------------------------
-                    // 顶部工具栏
-                    // ---------------------------------------------------------
-                    topBar
-                    
-                    Spacer()
-                    
-                    // ---------------------------------------------------------
-                    // 底部状态面板
-                    // ---------------------------------------------------------
-                    bottomPanel(bottomInset: geo.safeAreaInsets.bottom)
+            if isNavigationStarted && !isPaused {
+                // HUD 顶栏 + 底栏
+                GeometryReader { geo in
+                    VStack(spacing: 0) {
+                        topBar
+                        Spacer()
+                        bottomPanel(bottomInset: geo.safeAreaInsets.bottom)
+                    }
+                    .ignoresSafeArea(edges: .bottom)
                 }
-                .ignoresSafeArea(edges: .bottom)
+                .transition(.opacity)
+                
+                // 暂停按钮
+                VStack {
+                    Spacer()
+                    Button {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            isPaused = true
+                        }
+                        isFeedbackActive = false
+                        speech.speakInterrupting("Paused.")
+                    } label: {
+                        navigationActionButton(icon: "pause.fill", text: "Pause", color: Theme.danger, textColor: .white)
+                    }
+                    .padding(.bottom, 100)
+                }
+                .transition(.opacity)
             }
         }
         .onAppear {
-            // 播报"准备中"
-            speech.speak("Preparing")
-            
-            // camera.start() 现在是非阻塞的：
-            //   - AR 会话立刻启动（快）
-            //   - ML 检测模型在后台线程加载（慢，但不阻塞主线程）
-            //   - 加载完成前，帧数据会被跳过
-            //   - 加载完成后，自动开始检测，FPS > 0，加载页面消失
             camera.start()
             
             stepConverter.setARSession(camera.session)
@@ -70,7 +76,7 @@ struct ContentView: View {
             feedbackManager = fm
             
             stepConverter.onStepDetected = { [self] in
-                guard !showCalibration else { return }
+                guard !showCalibration, isFeedbackActive else { return }
                 fm.handleStep(with: camera.detections)
             }
         }
@@ -79,15 +85,16 @@ struct ContentView: View {
             speech.stop()
         }
         .onReceive(camera.$fps) { fps in
-            // 当 fps > 0 说明摄像头已经开始出帧，撤掉加载动画
             if fps > 0 && !isCameraReady {
                 withAnimation(.easeOut(duration: 0.5)) {
                     isCameraReady = true
                 }
+                // 摄像头就绪后播报提示
+                speech.speakInterrupting("Ready. Point your camera and tap Start.")
             }
         }
         .onReceive(camera.$detections) { detections in
-            guard !showCalibration else { return }
+            guard isFeedbackActive, !showCalibration else { return }
             feedbackManager?.update(with: detections)
         }
         .onChange(of: feedbackDistanceMode) { oldMode, newMode in
@@ -97,7 +104,6 @@ struct ContentView: View {
         .sheet(isPresented: $showCalibration) {
             CalibrationView(calibrator: stepConverter.calibrator)
                 .onAppear {
-                    // 标定页弹出的瞬间，打断正在播的避障语音
                     speech.stop()
                 }
         }
@@ -106,7 +112,6 @@ struct ContentView: View {
                 feedbackDistanceMode: $feedbackDistanceMode,
                 stepConverter: stepConverter,
                 onCalibrateRequested: {
-                    // 关闭设置页后打开标定页
                     showSettings = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                         showCalibration = true
@@ -114,26 +119,117 @@ struct ContentView: View {
                 }
             )
         }
-        // 加载动画覆盖层
+        // =================================================================
+        // 覆盖层：加载中 → 开始按钮 → 导航界面
+        // =================================================================
         .overlay {
             if !isCameraReady {
+                // ── 阶段 1：加载动画 ──
                 ZStack {
-                    Color.black
-                        .ignoresSafeArea()
+                    Color.black.ignoresSafeArea()
                     VStack(spacing: 24) {
                         ProgressView()
                             .scaleEffect(1.5)
                             .tint(.white)
                         Text("Preparing ...")
-                            .font(.system(size: 18, weight: .medium))
+                            .font(.system(size: 17, weight: .medium))
                             .foregroundColor(Theme.textSecondary)
                     }
                 }
                 .transition(.opacity)
+            } else if !isNavigationStarted {
+                // ── 阶段 2：摄像头就绪，等待用户点击开始 ──
+                startOverlay
+                    .transition(.opacity)
+            } else if isPaused {
+                // ── 阶段 3：导航暂停中 ──
+                pauseOverlay
+                    .transition(.opacity)
             }
         }
-        // 强制深色模式
         .preferredColorScheme(.dark)
+    }
+    
+    // =====================================================================
+    // 开始按钮覆盖层
+    // =====================================================================
+    
+    private var startOverlay: some View {
+        VStack {
+            Spacer()
+            
+            VStack(spacing: 20) {
+                Text("Point your camera ahead")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(Theme.textSecondary)
+                
+                Button {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        isNavigationStarted = true
+                    }
+                    speech.speakInterrupting("Navigation started.")
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        isFeedbackActive = true
+                    }
+                } label: {
+                    navigationActionButton(icon: "location.fill", text: "Start")
+                }
+            }
+            .padding(.bottom, 100)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.3).ignoresSafeArea())
+    }
+    
+    // =====================================================================
+    // 暂停覆盖层
+    // =====================================================================
+    
+    private var pauseOverlay: some View {
+        VStack {
+            Spacer()
+            
+            VStack(spacing: 20) {
+                Text("Navigation paused")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(Theme.textSecondary)
+                
+                Button {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        isPaused = false
+                    }
+                    speech.speakInterrupting("Resumed.")
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        isFeedbackActive = true
+                    }
+                } label: {
+                    navigationActionButton(icon: "play.fill", text: "Resume")
+                }
+            }
+            .padding(.bottom, 100)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.3).ignoresSafeArea())
+    }
+    
+    // =====================================================================
+    // 通用导航操作按钮（Start / Pause / Resume 复用）
+    // =====================================================================
+    
+    private func navigationActionButton(icon: String, text: String, color: Color = Theme.safe, textColor: Color = .black) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+            Text(text)
+                .font(.system(size: 18, weight: .semibold))
+        }
+        .foregroundColor(textColor)
+        .padding(.horizontal, 40)
+        .padding(.vertical, 14)
+        .background(color)
+        .clipShape(Capsule())
     }
     
     // =====================================================================
@@ -144,47 +240,33 @@ struct ContentView: View {
         HStack(spacing: 12) {
             
             // 步长指示器（仅展示，通过设置页标定）
-            HStack(spacing: 6) {
-                // 动态步长激活时显示脉动圆点
-                if stepConverter.isDynamicActive {
-                    Circle()
-                        .fill(Theme.safe)
-                        .frame(width: 8, height: 8)
+            hudCapsule {
+                HStack(spacing: 6) {
+                    if stepConverter.isDynamicActive {
+                        Circle()
+                            .fill(Theme.safe)
+                            .frame(width: 8, height: 8)
+                    }
+                    Text(stepLengthLabel)
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundColor(Theme.textPrimary)
                 }
-                
-                Text(stepLengthLabel)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(Theme.textPrimary)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(Theme.backgroundCard.opacity(0.9))
-            .clipShape(Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(Theme.border, lineWidth: 1)
-            )
             
             Spacer()
             
             // 设置按钮
             Button(action: { showSettings = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Theme.textPrimary)
-                    Text("Settings")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
+                hudCapsule {
+                    HStack(spacing: 6) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Theme.textPrimary)
+                        Text("Settings")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Theme.textPrimary)
+                    }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Theme.backgroundCard.opacity(0.9))
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(Theme.border, lineWidth: 1)
-                )
             }
         }
         .padding(.horizontal, 16)
@@ -210,7 +292,6 @@ struct ContentView: View {
             
             // 状态信息栏
             HStack(spacing: 16) {
-                // 检测数量
                 HStack(spacing: 5) {
                     Image(systemName: "eye.fill")
                         .font(.system(size: 14))
@@ -220,12 +301,10 @@ struct ContentView: View {
                         .foregroundColor(Theme.textPrimary)
                 }
                 
-                // 分隔点
                 Circle()
                     .fill(Theme.textDisabled)
                     .frame(width: 3, height: 3)
                 
-                // FPS
                 Text("\(String(format: "%.0f", camera.fps)) FPS")
                     .font(.system(size: 16, weight: .medium, design: .monospaced))
                     .foregroundColor(Theme.textSecondary)
@@ -248,7 +327,23 @@ struct ContentView: View {
     }
     
     // =====================================================================
-    // 步长来源标签
+    // 通用 HUD 胶囊样式（顶部工具栏复用）
+    // =====================================================================
+    
+    private func hudCapsule<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Theme.backgroundCard.opacity(0.9))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Theme.border, lineWidth: 1)
+            )
+    }
+    
+    // =====================================================================
+    // 步长标签
     // =====================================================================
     
     private var stepLengthLabel: String {
