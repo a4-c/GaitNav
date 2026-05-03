@@ -49,7 +49,7 @@ struct ContentView: View {
                 }
                 .transition(.opacity)
                 
-                // 暂停按钮
+                // 暂停按钮 + 设置按钮
                 VStack {
                     Spacer()
                     Button {
@@ -61,8 +61,11 @@ struct ContentView: View {
                     } label: {
                         navigationActionButton(icon: "pause.fill", text: "Pause", color: Theme.danger, textColor: .white)
                     }
-                    .padding(.bottom, 100)
+                    
+                    settingsButton
+                        .padding(.top, 16)
                 }
+                .padding(.bottom, 100)
                 .transition(.opacity)
             }
         }
@@ -158,26 +161,30 @@ struct ContentView: View {
         VStack {
             Spacer()
             
-            VStack(spacing: 20) {
-                Text("Point your camera ahead")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundColor(Theme.textSecondary)
-                
-                Button {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        isNavigationStarted = true
-                    }
-                    speech.speakInterrupting("Navigation started.")
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        isFeedbackActive = true
-                    }
-                } label: {
-                    navigationActionButton(icon: "location.fill", text: "Start")
+            Text("Point your camera ahead")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundColor(Theme.textSecondary)
+                .padding(.bottom, 20)
+            
+            Button {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    isNavigationStarted = true
                 }
+                speech.speakInterrupting("Navigation started.")
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    isFeedbackActive = true
+                }
+            } label: {
+                navigationActionButton(icon: "location.fill", text: "Start")
             }
-            .padding(.bottom, 100)
+            
+            // 占位：与 Pause / Resume 页的 Settings 按钮等高，保持主按钮位置一致
+            settingsButton
+                .hidden()
+                .padding(.top, 16)
         }
+        .padding(.bottom, 100)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.opacity(0.3).ignoresSafeArea())
     }
@@ -190,26 +197,28 @@ struct ContentView: View {
         VStack {
             Spacer()
             
-            VStack(spacing: 20) {
-                Text("Navigation paused")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundColor(Theme.textSecondary)
-                
-                Button {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        isPaused = false
-                    }
-                    speech.speakInterrupting("Resumed.")
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                        isFeedbackActive = true
-                    }
-                } label: {
-                    navigationActionButton(icon: "play.fill", text: "Resume")
+            Text("Navigation paused")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundColor(Theme.textSecondary)
+                .padding(.bottom, 20)
+            
+            Button {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    isPaused = false
                 }
+                speech.speakInterrupting("Resumed.")
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    isFeedbackActive = true
+                }
+            } label: {
+                navigationActionButton(icon: "play.fill", text: "Resume")
             }
-            .padding(.bottom, 100)
+            
+            settingsButton
+                .padding(.top, 16)
         }
+        .padding(.bottom, 100)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.opacity(0.3).ignoresSafeArea())
     }
@@ -230,6 +239,30 @@ struct ContentView: View {
         .padding(.vertical, 14)
         .background(color)
         .clipShape(Capsule())
+    }
+    
+    // =====================================================================
+    // 通用设置按钮（Pause / Resume 页复用）
+    // =====================================================================
+    
+    private var settingsButton: some View {
+        Button(action: { showSettings = true }) {
+            HStack(spacing: 6) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 15, weight: .medium))
+                Text("Settings")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .foregroundColor(Theme.textSecondary)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .background(Theme.backgroundCard.opacity(0.8))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Theme.border, lineWidth: 1)
+            )
+        }
     }
     
     // =====================================================================
@@ -254,20 +287,6 @@ struct ContentView: View {
             }
             
             Spacer()
-            
-            // 设置按钮
-            Button(action: { showSettings = true }) {
-                hudCapsule {
-                    HStack(spacing: 6) {
-                        Image(systemName: "gearshape.fill")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(Theme.textPrimary)
-                        Text("Settings")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Theme.textPrimary)
-                    }
-                }
-            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
