@@ -12,6 +12,10 @@ struct CalibrationView: View {
     @ObservedObject var calibrator: Calibrator
     @Environment(\.dismiss) var dismiss
     
+    // 语音播报（走够步数后提示用户可以停下）
+    @State private var speech = SpeechManager()
+    private let minStepsToPrompt = 10
+    
     // 控制步数跳动的动画
     @State private var stepPulse = false
     
@@ -103,6 +107,20 @@ struct CalibrationView: View {
         }
         .animation(.easeInOut(duration: 0.35), value: calibrator.isCalibrating)
         .animation(.easeInOut(duration: 0.35), value: calibrator.calibratedStepLength != nil)
+        .onChange(of: calibrator.calibrationSteps) { oldValue, newValue in
+            if calibrator.isCalibrating && oldValue < minStepsToPrompt && newValue >= minStepsToPrompt {
+                speech.speakInterrupting("You can stop and tap the stop button now.")
+            }
+        }
+        .onChange(of: calibrator.isCalibrating) { wasCalibrating, isCalibrating in
+            // 标定刚结束（true → false）时播报结果
+            guard wasCalibrating && !isCalibrating else { return }
+            if let stepLength = calibrator.calibratedStepLength {
+                speech.speakInterrupting("Calibration complete. Step length: \(String(format: "%.2f", stepLength)) meters.")
+            } else {
+                speech.speakInterrupting("Calibration failed. \(calibrator.statusMessage)")
+            }
+        }
     }
     
     // =====================================================================
