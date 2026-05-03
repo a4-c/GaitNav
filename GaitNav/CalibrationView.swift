@@ -15,6 +15,28 @@ struct CalibrationView: View {
     // 控制步数跳动的动画
     @State private var stepPulse = false
     
+    // 用户是否在本次打开页面后尝试过标定
+    @State private var hasAttempted = false
+    
+    // 是否有过标定尝试（本次操作或 Calibrator 中的残留状态）
+    // 成功残留：calibratedStepLength 和 calibrationDistance 同时非 nil
+    // （仅 calibratedStepLength 非 nil 可能是 init 从 UserDefaults 加载的，不算尝试过）
+    // 失败残留：
+    //   1. calibrationSteps > 0（走了几步但不够）
+    //   2. calibratedStepLength 被 startCalibration 清成了 nil，
+    //      但 UserDefaults 里有历史记录（hasEverCalibrated），说明 init 加载的值被清掉了
+    private var hasBeenAttempted: Bool {
+        hasAttempted
+        || (calibrator.calibratedStepLength != nil && calibrator.calibrationDistance != nil)
+        || calibrator.calibrationSteps > 0
+        || (calibrator.calibratedStepLength == nil && calibrator.hasEverCalibrated)
+    }
+    
+    // 标定失败状态：不在标定中、没有成功结果、但尝试过
+    private var isFailureState: Bool {
+        !calibrator.isCalibrating && calibrator.calibratedStepLength == nil && hasBeenAttempted
+    }
+    
     var body: some View {
         ZStack {
             // 全屏深色背景
@@ -166,30 +188,55 @@ struct CalibrationView: View {
     // 状态信息卡片
     // =====================================================================
     
+    @ViewBuilder
     private var statusCard: some View {
-        HStack(spacing: 12) {
-            // 状态图标
-            Image(systemName: statusIcon)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundColor(statusIconColor)
-                .frame(width: 36, height: 36)
-                .background(statusIconColor.opacity(0.12))
-                .clipShape(Circle())
-            
-            Text(calibrator.statusMessage)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(3)
-            
-            Spacer()
+        if isFailureState {
+            // 失败状态：图标 + 信息居中显示，字号放大
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundColor(Theme.warning)
+                
+                Text(calibrator.statusMessage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Theme.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(24)
+            .background(Theme.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                    .stroke(Theme.warning.opacity(0.3), lineWidth: 1.5)
+            )
+        } else {
+            // 初始状态 / 标定进行中：图标 + 信息左对齐
+            HStack(spacing: 12) {
+                // 状态图标
+                Image(systemName: statusIcon)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(statusIconColor)
+                    .frame(width: 36, height: 36)
+                    .background(statusIconColor.opacity(0.12))
+                    .clipShape(Circle())
+                
+                Text(calibrator.statusMessage)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(3)
+                
+                Spacer()
+            }
+            .padding(16)
+            .background(Theme.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                    .stroke(Theme.border, lineWidth: 1)
+            )
         }
-        .padding(16)
-        .background(Theme.backgroundCard)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
-                .stroke(Theme.border, lineWidth: 1)
-        )
     }
     
     // 状态图标：根据当前阶段变化
@@ -308,6 +355,13 @@ struct CalibrationView: View {
     // 底部操作按钮
     // =====================================================================
     
+    // 按钮文案逻辑：
+    //   首次进入页面、尚未尝试标定 → "Start"
+    //   尝试过标定（无论成功或失败）→ "Restart"
+    private var startButtonLabel: String {
+        hasBeenAttempted ? "Restart" : "Start"
+    }
+    
     private var actionButtons: some View {
         VStack(spacing: 12) {
             if calibrator.isCalibrating {
@@ -326,12 +380,15 @@ struct CalibrationView: View {
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusLarge))
                 }
             } else {
-                // 未在标定 → 蓝色 Start 按钮
-                Button(action: { calibrator.startCalibration() }) {
+                // 未在标定 → 蓝色 Start / Restart 按钮
+                Button(action: {
+                    hasAttempted = true
+                    calibrator.startCalibration()
+                }) {
                     HStack(spacing: 8) {
-                        Image(systemName: "play.fill")
+                        Image(systemName: hasBeenAttempted ? "arrow.counterclockwise" : "play.fill")
                             .font(.system(size: 14))
-                        Text("Start")
+                        Text(startButtonLabel)
                             .font(.system(size: 18, weight: .bold))
                     }
                     .foregroundColor(.white)
@@ -341,8 +398,8 @@ struct CalibrationView: View {
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusLarge))
                 }
                 
-                // 有标定结果时显示 Done 按钮
-                if calibrator.calibratedStepLength != nil {
+                // 尝试过标定后显示 Done 按钮（无论成功或失败）
+                if hasBeenAttempted {
                     Button(action: { dismiss() }) {
                         Text("Done")
                             .font(.system(size: 16, weight: .semibold))
