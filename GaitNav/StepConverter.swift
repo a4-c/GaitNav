@@ -156,13 +156,20 @@ class StepConverter: ObservableObject {
     //   2. 标定步长
     //   3. 默认步长
     var effectiveStepLength: Float {
-        // 检查动态步长是否有效（有值 + 未超时）
+        // 1. 动态步长（实时）
         if let dynamic = dynamicEstimator.currentStepLength,
            dynamicEstimator.isActive {
             return dynamic
         }
-        // 动态步长无效，回退到标定值或默认值
-        return calibrator.calibratedStepLength ?? defaultStepLength
+        // 2. 本次内存中的标定值
+        if let cal = calibrator.calibratedStepLength {
+            return cal
+        }
+        // 3. UserDefaults 里的历史标定值
+        let saved = UserDefaults.standard.float(forKey: "calibratedStepLength")
+        if saved > 0 { return saved }
+        // 4. 默认值
+        return defaultStepLength
     }
     
     // 动态步长当前是否处于活跃状态
