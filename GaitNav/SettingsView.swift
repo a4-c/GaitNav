@@ -114,17 +114,17 @@ struct SettingsView: View {
                                         color: Theme.safe,
                                         title: "Dynamic",
                                         desc: "Real-time measurement while walking",
-                                        isActive: stepConverter.isDynamicActive
+                                        isActive: stepConverter.stepLengthSource == .dynamic
                                     )
                                     
                                     priorityRow(
                                         icon: "figure.walk",
                                         color: Theme.accent,
                                         title: "Calibrated",
-                                        desc: stepConverter.calibrator.calibratedStepLength != nil
-                                            ? "\(String(format: "%.2f", stepConverter.calibrator.calibratedStepLength!)) m/step"
+                                        desc: stepConverter.stepLengthSource == .calibrated
+                                            ? "\(String(format: "%.2f", stepConverter.effectiveStepLength)) m/step"
                                             : "Not yet calibrated",
-                                        isActive: !stepConverter.isDynamicActive && stepConverter.calibrator.calibratedStepLength != nil
+                                        isActive: stepConverter.stepLengthSource == .calibrated
                                     )
                                     
                                     priorityRow(
@@ -132,7 +132,7 @@ struct SettingsView: View {
                                         color: Theme.textDisabled,
                                         title: "Default",
                                         desc: "0.65 m/step (population average)",
-                                        isActive: !stepConverter.isDynamicActive && stepConverter.calibrator.calibratedStepLength == nil
+                                        isActive: stepConverter.stepLengthSource == .defaultValue
                                     )
                                 }
                                 
@@ -141,7 +141,7 @@ struct SettingsView: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "arrow.triangle.2.circlepath")
                                             .font(.system(size: 14, weight: .medium))
-                                        Text(stepConverter.calibrator.calibratedStepLength != nil
+                                        Text(stepConverter.hasEverCalibrated
                                              ? "Recalibrate"
                                              : "Calibrate Now")
                                         .font(.system(size: 15, weight: .semibold))
@@ -281,12 +281,10 @@ struct SettingsView: View {
     
     private var stepSourceBadge: some View {
         let (text, color): (String, Color) = {
-            if stepConverter.isDynamicActive {
-                return ("Dynamic", Theme.safe)
-            } else if stepConverter.calibrator.calibratedStepLength != nil {
-                return ("Calibrated", Theme.accent)
-            } else {
-                return ("Default", Theme.textDisabled)
+            switch stepConverter.stepLengthSource {
+            case .dynamic:      return ("Dynamic", Theme.safe)
+            case .calibrated:   return ("Calibrated", Theme.accent)
+            case .defaultValue: return ("Default", Theme.textDisabled)
             }
         }()
         

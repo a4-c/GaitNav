@@ -16,7 +16,7 @@ class Calibrator: ObservableObject {
     // weak 防止循环引用
     weak var arSession: ARSession?
     
-    // 标定完成后计算出的步长，单位：米
+    // 这次标定完成后计算出的步长，单位：米
     @Published var calibratedStepLength: Float? = nil
     
     // 当前是否正在标定
@@ -43,6 +43,19 @@ class Calibrator: ObservableObject {
     //   onCalibrationStopped：标定结束 → StepConverter 恢复动态检测
     var onCalibrationStarted: (() -> Void)?
     var onCalibrationStopped: (() -> Void)?
+    
+    // 当前可用的标定步长
+    // 没有返回 nil，由 StepConverter 决定用默认值
+    var effectiveStepLength: Float? {
+        let saved = UserDefaults.standard.float(forKey: stepLengthKey)
+        return saved > 0 ? saved : nil
+    }
+    
+    // 用户是否曾经成功标定过
+    // 判断依据是 UserDefaults 中有没有保存过步长
+    var hasEverCalibrated: Bool {
+        UserDefaults.standard.float(forKey: stepLengthKey) > 0
+    }
     
     init() {
         // 尝试从 UserDefaults 读取之前保存的标定结果

@@ -153,23 +153,44 @@ class StepConverter: ObservableObject {
     //
     // 三级优先级：
     //   1. 动态步长
-    //   2. 标定步长
+    //   2. 标定步长（本次或历史）
     //   3. 默认步长
     var effectiveStepLength: Float {
-        // 1. 动态步长（实时）
+        // 检查动态步长是否有效（有值 + 未超时）
         if let dynamic = dynamicEstimator.currentStepLength,
            dynamicEstimator.isActive {
             return dynamic
         }
-        // 2. 本次内存中的标定值
-        if let cal = calibrator.calibratedStepLength {
-            return cal
+        // 动态步长无效，回退到标定值
+        // 都没有则使用默认值
+        return calibrator.effectiveStepLength ?? defaultStepLength
+    }
+    
+    // 当前 effectiveStepLength 的值从哪一级取到的
+    // SettingsView 用它来高亮对应的优先级行和徽章
+    //
+    // .dynamic      → 动态估算器有值且未超时
+    // .calibrated   → Calibrator 有可用的标定值（本次或历史）
+    // .defaultValue → 以上都没有，使用 0.65m 兜底
+    enum StepLengthSource {
+        case dynamic, calibrated, defaultValue
+    }
+    
+    var stepLengthSource: StepLengthSource {
+        if let _ = dynamicEstimator.currentStepLength,
+           dynamicEstimator.isActive {
+            return .dynamic
         }
-        // 3. UserDefaults 里的历史标定值
-        let saved = UserDefaults.standard.float(forKey: "calibratedStepLength")
-        if saved > 0 { return saved }
-        // 4. 默认值
-        return defaultStepLength
+        if calibrator.effectiveStepLength != nil {
+            return .calibrated
+        }
+        return .defaultValue
+    }
+    
+    // 用户是否曾经成功标定过（本次内存中有值，或磁盘上有历史记录）
+    // SettingsView 用它来决定按钮文案是 "Recalibrate" 还是 "Calibrate Now"
+    var hasEverCalibrated: Bool {
+        calibrator.hasEverCalibrated
     }
     
     // 动态步长当前是否处于活跃状态
