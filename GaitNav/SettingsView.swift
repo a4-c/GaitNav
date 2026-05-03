@@ -121,9 +121,9 @@ struct SettingsView: View {
                                         icon: "figure.walk",
                                         color: Theme.accent,
                                         title: "Calibrated",
-                                        desc: stepConverter.stepLengthSource == .calibrated
-                                            ? "\(String(format: "%.2f", stepConverter.effectiveStepLength)) m/step"
-                                            : "Not yet calibrated",
+                                        desc: stepConverter.calibrator.effectiveStepLength
+                                            .map { "\(String(format: "%.2f", $0)) m/step" }
+                                            ?? "Not yet calibrated",
                                         isActive: stepConverter.stepLengthSource == .calibrated
                                     )
                                     
