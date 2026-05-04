@@ -96,40 +96,42 @@ struct DetectionOverlay: View {
     
     @ViewBuilder
     private func cornerMarkers(rect: CGRect, color: Color) -> some View {
-        let length: CGFloat = min(16, min(rect.width, rect.height) * 0.3)
-        let thickness: CGFloat = 3
+        let length: CGFloat = min(20, min(rect.width, rect.height) * 0.35)
+        let thickness: CGFloat = 5
+        // 向外偏移，避免与边框重叠
+        let offset: CGFloat = 2
         
         // 左上角
         Path { path in
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY + length))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.minX + length, y: rect.minY))
+            path.move(to: CGPoint(x: rect.minX - offset, y: rect.minY - offset + length))
+            path.addLine(to: CGPoint(x: rect.minX - offset, y: rect.minY - offset))
+            path.addLine(to: CGPoint(x: rect.minX - offset + length, y: rect.minY - offset))
         }
-        .stroke(color, lineWidth: thickness)
+        .stroke(color, style: StrokeStyle(lineWidth: thickness, lineCap: .round, lineJoin: .round))
         
         // 右上角
         Path { path in
-            path.move(to: CGPoint(x: rect.maxX - length, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + length))
+            path.move(to: CGPoint(x: rect.maxX + offset - length, y: rect.minY - offset))
+            path.addLine(to: CGPoint(x: rect.maxX + offset, y: rect.minY - offset))
+            path.addLine(to: CGPoint(x: rect.maxX + offset, y: rect.minY - offset + length))
         }
-        .stroke(color, lineWidth: thickness)
+        .stroke(color, style: StrokeStyle(lineWidth: thickness, lineCap: .round, lineJoin: .round))
         
         // 左下角
         Path { path in
-            path.move(to: CGPoint(x: rect.minX, y: rect.maxY - length))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX + length, y: rect.maxY))
+            path.move(to: CGPoint(x: rect.minX - offset, y: rect.maxY + offset - length))
+            path.addLine(to: CGPoint(x: rect.minX - offset, y: rect.maxY + offset))
+            path.addLine(to: CGPoint(x: rect.minX - offset + length, y: rect.maxY + offset))
         }
-        .stroke(color, lineWidth: thickness)
+        .stroke(color, style: StrokeStyle(lineWidth: thickness, lineCap: .round, lineJoin: .round))
         
         // 右下角
         Path { path in
-            path.move(to: CGPoint(x: rect.maxX - length, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - length))
+            path.move(to: CGPoint(x: rect.maxX + offset - length, y: rect.maxY + offset))
+            path.addLine(to: CGPoint(x: rect.maxX + offset, y: rect.maxY + offset))
+            path.addLine(to: CGPoint(x: rect.maxX + offset, y: rect.maxY + offset - length))
         }
-        .stroke(color, lineWidth: thickness)
+        .stroke(color, style: StrokeStyle(lineWidth: thickness, lineCap: .round, lineJoin: .round))
     }
     
     // =====================================================================
