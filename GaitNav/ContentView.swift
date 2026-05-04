@@ -79,7 +79,7 @@ struct ContentView: View {
             feedbackManager = fm
             
             stepConverter.onStepDetected = { [self] in
-                guard !showCalibration, isFeedbackActive else { return }
+                guard !showCalibration, !showSettings, isFeedbackActive else { return }
                 fm.handleStep(with: camera.detections)
             }
         }
@@ -97,7 +97,7 @@ struct ContentView: View {
             }
         }
         .onReceive(camera.$detections) { detections in
-            guard isFeedbackActive, !showCalibration else { return }
+            guard isFeedbackActive, !showCalibration, !showSettings else { return }
             feedbackManager?.update(with: detections)
         }
         .onChange(of: feedbackDistanceMode) { oldMode, newMode in
@@ -121,6 +121,9 @@ struct ContentView: View {
                     }
                 }
             )
+            .onAppear {
+                speech.stop()
+            }
         }
         // =================================================================
         // 覆盖层：加载中 → 开始按钮 → 导航界面
