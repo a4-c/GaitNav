@@ -14,11 +14,19 @@ struct DetectionOverlay: View {
     
     var body: some View {
         GeometryReader { geometry in
+            
+            // 被大框包含且距离相似的小框，视觉上降低透明度
+            let suppressed = Detection.suppressedIDs(in: detections)
+            
             ForEach(detections) { detection in
                 
                 let rect = convertRect(detection.boundingBox, in: geometry.size)
                 let color = Theme.distanceColor(for: detection.distance)
                 let isClose = (detection.distance ?? 999) < 1.5
+                let isSuppressed = suppressed.contains(detection.id)
+                
+                // 被包含的小框整体降低透明度，视觉上"退到背后"
+                let dimming: Double = isSuppressed ? 0.3 : 1.0
                 
                 // ==========================================================
                 // 检测框
@@ -33,9 +41,11 @@ struct DetectionOverlay: View {
                     )
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
+                    .opacity(dimming)
                 
                 // 近距离时，框的四个角加重标记
-                if isClose {
+                // 被抑制的小框不显示角标（它们已经退到背后，角标反而干扰）
+                if isClose && !isSuppressed {
                     cornerMarkers(rect: rect, color: color)
                 }
                 
@@ -45,6 +55,7 @@ struct DetectionOverlay: View {
                 
                 detectionLabel(for: detection, color: color)
                     .position(x: rect.midX, y: rect.minY - 16)
+                    .opacity(dimming)
             }
         }
     }

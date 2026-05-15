@@ -166,14 +166,6 @@ class FeedbackManager {
     // 不在行走路线上、又离得远的物体，不值得播报
     private let sideIgnoreSteps = 5
     
-    // 包含抑制：小框面积被大框覆盖超过这个比例，就认为"被包含"
-    // 0.75 = 小框 75% 的面积在大框里面
-    private let containmentOverlapThreshold: CGFloat = 0.75
-    
-    // 包含抑制：距离差异在这个范围内才认为"距离相似"
-    // 距离相似说明大小框检测的其实是同一个区域 / 同一组物体
-    private let containmentDistanceTolerance: Float = 0.5
-    
     // =====================================================================
     // 焦点释放 & 失去焦点的元数据
     // =====================================================================
@@ -261,7 +253,7 @@ class FeedbackManager {
         
         // 大框里的小框（距离相似）不进入语音候选
         // currentIDs 仍然用原始 detections 构建，保证 previousIDs 跟踪不受影响
-        let filteredDetections = suppressContainedDetections(detections)
+        let filteredDetections = Detection.suppressContained(detections)
         
         // =================================================================
         // 第一步：构建候选列表
@@ -767,69 +759,6 @@ class FeedbackManager {
         focusedCurrentSteps = nil
         focusedCurrentDistance = nil
         lastAnnouncedDistance = nil
-    }
-    
-    // =====================================================================
-    // 包含抑制：只用于语音管道，视觉不受影响
-    // =====================================================================
-    
-    // 移除被大框包含且距离相似的小框
-    //
-    // 算法：
-    //   对每个检测框，检查是否存在一个更大的框满足两个条件：
-    //     1. 小框面积的 75%+ 在大框内部（空间包含）
-    //     2. 两者距离差 < 0.5m（距离相似 → 同一区域的物体）
-    //   如果满足 → 这个小框是冗余的，语音不播报它
-    //
-    // 典型场景：
-    //   餐桌检测框里套着杯子、盘子、碗，距离都差不多，
-    //   全部播报就变成"报菜名"，只报"餐桌"就够了。
-    private func suppressContainedDetections(_ detections: [Detection]) -> [Detection] {
-        
-        // 少于 2 个检测不需要做包含检查
-        guard detections.count >= 2 else { return detections }
-        
-        // 记录需要被抑制的 ID
-        var suppressedIDs = Set<UUID>()
-        
-        for small in detections {
-            let smallArea = small.boundingBox.width * small.boundingBox.height
-            // 面积为 0 的框跳过（退化情况）
-            guard smallArea > 0 else { continue }
-            
-            for large in detections {
-                // 不和自己比较
-                guard large.id != small.id else { continue }
-                // 已经被抑制的框不能作为大框去抑制别人
-                guard !suppressedIDs.contains(large.id) else { continue }
-                
-                // 条件 1：大框确实比小框大
-                let largeArea = large.boundingBox.width * large.boundingBox.height
-                guard largeArea > smallArea else { continue }
-                
-                // 条件 2：空间包含：小框大部分面积在大框内
-                let intersection = small.boundingBox.intersection(large.boundingBox)
-                guard !intersection.isNull else { continue }
-                let overlapArea = intersection.width * intersection.height
-                let overlapRatio = overlapArea / smallArea
-                guard overlapRatio >= containmentOverlapThreshold else { continue }
-                
-                // 条件 3：距离相似
-                // 两者都有距离信息，且差值在容忍范围内
-                if let smallDist = small.distance, let largeDist = large.distance {
-                    let distanceDiff = abs(smallDist - largeDist)
-                    if distanceDiff <= containmentDistanceTolerance {
-                        // 所有条件满足：小框被大框包含且距离相似 → 抑制小框
-                        suppressedIDs.insert(small.id)
-                        // 已经被抑制了，不用再找其他大框
-                        break
-                    }
-                }
-                // 如果某一方没有距离信息，保守起见不抑制（宁可多报也不漏报）
-            }
-        }
-        
-        return detections.filter { !suppressedIDs.contains($0.id) }
     }
     
     // =====================================================================
