@@ -221,6 +221,8 @@ class FeedbackManager {
         let detection: Detection
         let distance: Float
         let steps: Int
+        let stableSteps: Int
+        let adaptiveSteps: Int
         // 时钟方位（"12 o'clock"）
         let direction: String
         // 是否在行走路径中央（midX 在 0.35~0.65 之间）
@@ -254,6 +256,9 @@ class FeedbackManager {
         // currentIDs 仍然用原始 detections 构建，保证 previousIDs 跟踪不受影响
         let filteredDetections = Detection.suppressContained(detections)
         
+        // 步数模式在倒数前使用稳定引导；米数模式保持原来的自适应路径。
+        let shouldUseAdaptiveSteps = distanceMode == .meters || isCountdownActive
+        
         // =================================================================
         // 第一步：构建候选列表
         // =================================================================
@@ -266,7 +271,12 @@ class FeedbackManager {
                 // 没有距离信息的物体无法判断危险程度，跳过
                 guard let distance = detection.distance else { return nil }
                 
-                let steps = stepConverter.distanceToSteps(distance)
+                let stableSteps = stepConverter.distanceToStableSteps(distance)
+                let adaptiveSteps = stepConverter.distanceToSteps(distance)
+                // 倒数前使用标定/默认步长，保持用户已经听到的空间尺度稳定。
+                // 倒数激活后允许现有自适应估计修正近距离反馈。
+                let steps = shouldUseAdaptiveSteps ? adaptiveSteps : stableSteps
+                
                 let direction = clockDirection(from: detection.boundingBox)
                 let midX = detection.boundingBox.midX
                 let isCenter = midX >= sideMargin && midX <= (1.0 - sideMargin)
@@ -279,6 +289,8 @@ class FeedbackManager {
                     detection: detection,
                     distance: distance,
                     steps: steps,
+                    stableSteps: stableSteps,
+                    adaptiveSteps: adaptiveSteps,
                     direction: direction,
                     isCenter: isCenter,
                     isNew: isNew

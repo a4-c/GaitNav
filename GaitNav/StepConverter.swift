@@ -166,6 +166,12 @@ class StepConverter: ObservableObject {
         return calibrator.effectiveStepLength ?? defaultStepLength
     }
     
+    // 稳定引导步长：用于保持倒数前的语音距离一致。
+    // 这里刻意忽略短时间内波动较大的动态步长估计。
+    var stableStepLength: Float {
+        return calibrator.effectiveStepLength ?? defaultStepLength
+    }
+    
     // 当前 effectiveStepLength 的值从哪一级取到的
     // SettingsView 用它来高亮对应的优先级行和徽章
     //
@@ -218,6 +224,12 @@ class StepConverter: ObservableObject {
         //   对于视障辅助来说，"安全"比"精确"更重要
         //   多走一步没事，少走一步可能撞上障碍物
         return Int(ceil(steps))
+    }
+    
+    // 使用稳定的标定/默认步长换算距离。
+    // FeedbackManager 在倒数前使用它，避免剩余步数反向增加造成混乱。
+    func distanceToStableSteps(_ distance: Float) -> Int {
+        return Int(ceil(distance / stableStepLength))
     }
     
     // =====================================================================
