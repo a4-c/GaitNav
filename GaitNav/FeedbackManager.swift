@@ -9,7 +9,7 @@ import ARKit
 //   2. 两段式反馈：
 //      远距离（> 5 步）→ 语音播报物体名 + 方位 + 步数，只在关键阈值时触发
 //      近距离（≤ 5 步）→ 步伐同步倒数，用户每走一步说一个数字
-//      1 步 → 最后一句短促行动提示（"Arrived"）
+//      1 步 → 最后一句短促行动提示（"Stop"）
 //   3. 倒数与步伐同步：
 //      倒数模式下的数字播报由 StepConverter 的步伐检测事件驱动
 //      用户走一步 → 加速度计检测到 → handleStep() 被调用 → 读取 LiDAR 最新距离
@@ -26,7 +26,7 @@ import ARKit
 //   "4"                            ← 用户又走了一步
 //   "3"                            ← ...
 //   "2"
-//   "Arrived"                       ← 最后一步，不再使用 warning 长句
+//   "Stop"                          ← 最后一步，不再使用 warning 长句
 //
 // 全程 7 句话，中间大量安静时间。用户不需要自己记步数。
 //
@@ -53,7 +53,7 @@ import ARKit
 //   "chair, 3 meters"               ← 跨过 3m 阈值
 //   "chair, 2 meters"               ← 跨过 2m 阈值
 //   "chair, 1 meter"                ← 跨过 1m 阈值
-//   "Arrived"                        ← 距离 < 0.5m
+//   "Stop"                           ← 距离 < 0.5m
 //
 // 全程 5 句话，没有倒数，没有步伐同步。和传统导航系统的行为一致。
 class FeedbackManager {
@@ -129,8 +129,8 @@ class FeedbackManager {
     // 1 步以内 = 最后一步，倒数模式下使用短促行动提示
     private let urgentStepThreshold = 1
     
-    // 最后一步播报。这里没有路线转向信息，所以默认用 Arrived
-    private let finalCountdownText = "Arrived"
+    // 最后一步播报。这里没有路线转向信息，所以使用直接的行动提示 Stop
+    private let finalCountdownText = "Stop"
     
     // 动态步长变化造成的估算偏差达到这个步数时，播报一次修正。
     private let correctionStepDelta = 2
@@ -149,7 +149,7 @@ class FeedbackManager {
     private let meterThresholds: [Float] = [10.0, 5.0, 3.0, 2.0, 1.0]
     
     // 紧急距离（米）
-    // 低于此距离 → 播报 "Arrived"
+    // 低于此距离 → 播报 "Stop"
     private let urgentMeterThreshold: Float = 0.5
     
     // =====================================================================
@@ -456,7 +456,7 @@ class FeedbackManager {
             focusedCurrentDistance = candidate.distance
             
             // 米数模式：
-            //   只看距离阈值：跨过 10m/5m/3m/2m/1m 时简短更新，< 0.5m 时说 Arrived
+            //   只看距离阈值：跨过 10m/5m/3m/2m/1m 时简短更新，< 0.5m 时说 Stop
             //   所有播报由画面帧的距离变化驱动，和用户步伐无关
             if distanceMode == .meters {
                 updateFocusedMetersMode(candidate: candidate, direction: direction, now: now)
@@ -619,7 +619,7 @@ class FeedbackManager {
     // 这个函数做的事情：
     //   1. 只在没有近期 confirmed step 时介入，避免和主路重复播报。
     //   2. 只在 currentSteps 真的比 lastAnnouncedSteps 小时播报，避免距离抖动。
-    //   3. 只说短数字或 Arrived，不说完整物体句。
+    //   3. 只说短数字或 Stop，不说完整物体句。
     private func tryVisualCountdownFallback(now: Date, isConfirmedStepUpdate: Bool) -> Bool {
         
         // 米数模式没有倒数机制，不需要视觉兜底
@@ -675,7 +675,7 @@ class FeedbackManager {
         return false
     }
     
-    // 数字倒数统一从这里播，避免多个地方各自处理 "Arrived"。
+    // 数字倒数统一从这里播，避免多个地方各自处理 "Stop"。
     private func speakCountdownStep(_ steps: Int) {
         if steps <= urgentStepThreshold {
             speech.speakInterrupting(finalCountdownText)
@@ -695,7 +695,7 @@ class FeedbackManager {
         
         let currentDistance = candidate.distance
         
-        // 紧急距离（< 0.5m）：立刻播报 Arrived
+        // 紧急距离（< 0.5m）：立刻播报 Stop
         // 不受防抖限制，因为用户可能没在走路（物体在靠近用户）
         if currentDistance <= urgentMeterThreshold,
            let lastDist = lastAnnouncedDistance,

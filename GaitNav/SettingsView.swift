@@ -269,9 +269,9 @@ struct SettingsView: View {
     private func modeDescription(_ mode: FeedbackDistanceMode) -> String {
         switch mode {
         case .steps:
-            return "Gait-synced countdown: \"5, 4, 3, 2, Arrived\""
+            return "Gait-synced countdown: \"5, 4, 3, 2, Stop\""
         case .meters:
-            return "Distance thresholds: \"3m, 2m, 1m, Arrived\""
+            return "Distance thresholds: \"3m, 2m, 1m, Stop\""
         }
     }
     
