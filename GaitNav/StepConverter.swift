@@ -68,7 +68,10 @@ class StepConverter: ObservableObject {
     // 波峰检测阈值
     // 只有合加速度超过这个值的波峰才算"走了一步"
     // 低于这个值的波峰被认为是噪声（手抖、呼吸等微小振动）
-    private let stepThreshold: Double = 1.05
+    private let peakThreshold: Double = 1.05
+    
+    // For testing
+    // private let peakThreshold: Double = 1.05
     
     // 上一次成功检测到步伐的时间
     // 用于防抖机制
@@ -372,7 +375,7 @@ class StepConverter: ObservableObject {
             
             // 检查条件1：波峰够大吗？（绝对阈值）
             // 检查条件2：振幅够大吗？（相对阈值，过滤车辆振动等低振幅噪声）
-            if lastAcceleration > stepThreshold && amplitude > amplitudeThreshold {
+            if lastAcceleration > peakThreshold && amplitude > amplitudeThreshold {
                 
                 // 检查条件3：距上一步时间够长吗？（防抖）
                 let now = Date()
@@ -452,8 +455,8 @@ class StepConverter: ObservableObject {
 //            
 //            print("valley=\(String(format: "%.3f", lastValley)) peak=\(String(format: "%.3f", lastAcceleration)) amp=\(String(format: "%.3f", amplitude))")
 //            
-//            if lastAcceleration > stepThreshold && amplitude > amplitudeThreshold {
-//                
+//            if lastAcceleration > peakThreshold && amplitude > amplitudeThreshold {
+//
 //                let now = Date()
 //                if now.timeIntervalSince(lastStepTime) > minStepInterval {
 //                    
