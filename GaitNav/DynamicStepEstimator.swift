@@ -119,4 +119,13 @@ class DynamicStepEstimator {
         recentStepLengths = []
         currentStepLength = nil
     }
+    
+    // For testing
+    // 供单元测试注入动态步长值（绕过 ARSession 依赖）
+    #if DEBUG
+    func _setForTesting(stepLength: Float) {
+        currentStepLength = stepLength
+        lastUpdateTime = Date()
+    }
+    #endif
 }

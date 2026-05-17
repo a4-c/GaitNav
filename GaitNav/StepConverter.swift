@@ -28,6 +28,9 @@ class StepConverter: ObservableObject {
     // 动态步长估算器：实时逐步计算步长
     private let dynamicEstimator = DynamicStepEstimator()
     
+    // For testing
+    // let dynamicEstimator = DynamicStepEstimator()
+    
     // =====================================================================
     // 加速度计 & 波峰检测
     // =====================================================================
@@ -40,7 +43,19 @@ class StepConverter: ObservableObject {
     //   当前值 > lastAcceleration → 加速度在增大，正在往波峰走
     //   当前值 < lastAcceleration → 加速度在减小，正在往波谷走
     //   当前值 == lastAcceleration → 平稳（实际很少发生）
-    private var lastAcceleration: Double = 0
+    private var lastAcceleration: Double = 1.0
+    
+    // 最近一次谷值（下降阶段的最低点）
+    // 用于计算 valley-to-peak 振幅，过滤低振幅噪声（如车辆振动、手抖）
+    // 初始值 1.0：与 lastAcceleration 一致，都以重力基线为起点
+    private var lastValley: Double = 1.0
+    
+    // 谷到峰的最小振幅阈值
+    // 后续可通过实验调优
+    private let amplitudeThreshold: Double = 0.07
+    
+    // For testing
+    // private let amplitudeThreshold: Double = 0.08
     
     // 当前加速度是否处于上升趋势
     // 这个标志用来判断"波峰"：
@@ -337,9 +352,14 @@ class StepConverter: ObservableObject {
         // 波峰检测算法
         if magnitude > lastAcceleration {
             
-            // 当前值比上一次大 → 加速度在增大 → 标记为上升趋势
-            isRising = true
-        
+            // 从下降转为上升的瞬间，说明刚刚经历了一个真正的谷底
+            if !isRising {
+                // 此时的 lastAcceleration 就是这一轮下降的绝对最低点
+                lastValley = lastAcceleration
+                // 标记为上升趋势
+                isRising = true
+            }
+            
         } else if isRising {
             
             // 当前值 ≤ 上一次 且 之前在上升 → 转折点 → 波峰
@@ -347,23 +367,27 @@ class StepConverter: ObservableObject {
             // 先把 isRising 重置为 false
             isRising = false
             
-            // 检查条件1：波峰够大吗？
-            if lastAcceleration > stepThreshold {
+            // 计算谷到峰的振幅
+            let amplitude = lastAcceleration - lastValley
+            
+            // 检查条件1：波峰够大吗？（绝对阈值）
+            // 检查条件2：振幅够大吗？（相对阈值，过滤车辆振动等低振幅噪声）
+            if lastAcceleration > stepThreshold && amplitude > amplitudeThreshold {
                 
-                // 检查条件2：距上一步时间够长吗？（防抖）
+                // 检查条件3：距上一步时间够长吗？（防抖）
                 let now = Date()
                 if now.timeIntervalSince(lastStepTime) > minStepInterval {
                     
-                    // 两个条件都满足 → 确认这是真的一步
+                    // 三个条件都满足 → 确认这是真的一步
                     // 记录这一步的时间，供下次防抖比较
                     lastStepTime = now
                     
                     // 根据当前模式分发步伐事件
                     switch currentMode {
-                    
+                        
                     case .calibration:
                         calibrator.handleStep()
-                    
+                        
                     case .live:
                         dynamicEstimator.handleStep()
                         // 动态步长更新后，通知 SwiftUI 刷新界面
@@ -373,13 +397,12 @@ class StepConverter: ObservableObject {
                         // FeedbackManager 会据此决定是否播报倒数数字
                         onStepDetected?()
                     }
-                
+                    
                 }
                 // else：时间间隔太短，这个波峰是落地振荡，忽略
             }
-            // else：波峰太矮，这是噪声不是步伐，忽略
+            // else：波峰太矮或振幅太小，这是噪声不是步伐，忽略
         }
-        // else：值在减小且之前不是上升中 → 继续下降，什么都不做
         
         // 保存当前值，下次采样时用来比较趋势
         lastAcceleration = magnitude
@@ -388,8 +411,68 @@ class StepConverter: ObservableObject {
     // 重置波峰检测的内部状态
     // 在模式切换时调用，避免上一个模式的残留数据影响新模式
     private func resetPeakDetection() {
-        lastAcceleration = 0
+        lastAcceleration = 1.0
+        lastValley = 1.0
         isRising = false
         lastStepTime = .distantPast
     }
+    
+    // =====================================================================
+    // For testing
+    // =====================================================================
+    
+//    private func checkForStep(data: CMAccelerometerData) {
+//        
+//        let x = data.acceleration.x
+//        let y = data.acceleration.y
+//        let z = data.acceleration.z
+//        let magnitude = sqrt(x * x + y * y + z * z)
+//        
+//        // 提取到 processAcceleration，使波峰检测算法可被单元测试直接调用
+//        processAcceleration(magnitude)
+//    }
+//    
+//    // 波峰检测核心算法：接收合加速度值，判断是否构成一步并分发事件
+//    // 从 checkForStep 中提取，使单元测试可以直接喂入数值序列
+//    // 而不需要构造 CMAccelerometerData（该类没有公开的初始化器）
+//    func processAcceleration(_ magnitude: Double) {
+//
+//        if magnitude > lastAcceleration {
+//            
+//            if !isRising {
+//                lastValley = lastAcceleration
+//                isRising = true
+//            }
+//            
+//        } else if isRising {
+//            
+//            isRising = false
+//            
+//            let amplitude = lastAcceleration - lastValley
+//            
+//            print("valley=\(String(format: "%.3f", lastValley)) peak=\(String(format: "%.3f", lastAcceleration)) amp=\(String(format: "%.3f", amplitude))")
+//            
+//            if lastAcceleration > stepThreshold && amplitude > amplitudeThreshold {
+//                
+//                let now = Date()
+//                if now.timeIntervalSince(lastStepTime) > minStepInterval {
+//                    
+//                    lastStepTime = now
+//                    
+//                    switch currentMode {
+//                    
+//                    case .calibration:
+//                        calibrator.handleStep()
+//                    
+//                    case .live:
+//                        dynamicEstimator.handleStep()
+//                        objectWillChange.send()
+//                        onStepDetected?()
+//                    }
+//                }
+//            }
+//        }
+//
+//        lastAcceleration = magnitude
+//    }
 }
