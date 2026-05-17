@@ -63,7 +63,8 @@ class ObjectTracker {
     //   3. 如果找不到匹配 → 这是一个新出现的物体，创建新的追踪记录
     //   4. 没被任何新检测匹配到的旧追踪物体 → 标记为"消失了一帧"
     //   5. 连续消失太多帧的 → 彻底移除
-    func update(with detections: [Detection]) {
+    // 输入的是 Detector 的单帧原始结果，没有稳定 ID；稳定 ID 只保存在 TrackedObject 里。
+    func update(with rawDetections: [RawDetection]) {
         
         // 记录哪些已有追踪物体在这一帧被匹配到了
         // 用 Set<UUID> 存储被匹配到的追踪物体的 ID
@@ -77,7 +78,7 @@ class ObjectTracker {
         
         // 双重循环：外层遍历新检测，内层遍历已有追踪物体
         // 对每个新检测，找到 IoU 最大的那个追踪物体
-        for (detIndex, detection) in detections.enumerated() {
+        for (detIndex, rawDetection) in rawDetections.enumerated() {
             var bestIoU: CGFloat = 0
             var bestTrackedIndex: Int? = nil
             
@@ -85,7 +86,7 @@ class ObjectTracker {
                 // 跳过已经被其他检测匹配走的追踪物体（一对一匹配）
                 if matchedTrackedIDs.contains(tracked.id) { continue }
                 
-                let overlap = iou(detection.boundingBox, tracked.boundingBox)
+                let overlap = iou(rawDetection.boundingBox, tracked.boundingBox)
                 if overlap > bestIoU {
                     bestIoU = overlap
                     bestTrackedIndex = trackedIndex
@@ -103,23 +104,23 @@ class ObjectTracker {
                 matchedDetectionIndices.insert(detIndex)
                 
                 // 更新边界框为最新位置
-                trackedObjects[idx].boundingBox = detection.boundingBox
+                trackedObjects[idx].boundingBox = rawDetection.boundingBox
                 // 更新置信度
-                trackedObjects[idx].confidence = detection.confidence
+                trackedObjects[idx].confidence = rawDetection.confidence
                 // 重置消失计数（因为这帧又看到它了）
                 trackedObjects[idx].missedFrames = 0
                 // 年龄 +1
                 trackedObjects[idx].age += 1
                 
                 // 记录这帧的标签到历史中
-                trackedObjects[idx].labelHistory.append(detection.label)
+                trackedObjects[idx].labelHistory.append(rawDetection.label)
                 // 如果历史太长，删掉最早的记录，只保留最近的
                 if trackedObjects[idx].labelHistory.count > maxLabelHistory {
                     trackedObjects[idx].labelHistory.removeFirst()
                 }
                 
                 // 记录距离到历史数组（用于中位数滤波）
-                if let newDist = detection.distance {
+                if let newDist = rawDetection.distance {
                     trackedObjects[idx].distanceHistory.append(newDist)
                     // 如果历史太长，删掉最早的，只保留最近几帧
                     if trackedObjects[idx].distanceHistory.count > maxDistanceHistory {
@@ -134,17 +135,17 @@ class ObjectTracker {
         // 第三步：处理没被匹配到的新检测（新出现的物体）
         // ===================================================================
         
-        for (detIndex, detection) in detections.enumerated() {
+        for (detIndex, rawDetection) in rawDetections.enumerated() {
             if matchedDetectionIndices.contains(detIndex) { continue }
             
             // 创建一个新的追踪记录
             // 如果第一帧就有距离数据，放进历史数组；没有就先空着
-            let initialHistory: [Float] = detection.distance.map { [$0] } ?? []
+            let initialHistory: [Float] = rawDetection.distance.map { [$0] } ?? []
             trackedObjects.append(TrackedObject(
                 id: UUID(),
-                boundingBox: detection.boundingBox,
-                labelHistory: [detection.label],
-                confidence: detection.confidence,
+                boundingBox: rawDetection.boundingBox,
+                labelHistory: [rawDetection.label],
+                confidence: rawDetection.confidence,
                 distanceHistory: initialHistory,
                 missedFrames: 0,
                 // 刚出现，第 1 帧

@@ -32,7 +32,7 @@ class Detector {
     // 核心方法：接收一帧画面，返回检测结果
     // CVPixelBuffer 就是摄像头捕获的原始图像数据
     // @escaping 表示这个闭包（回调函数）会在方法返回之后才执行
-    func detect(pixelBuffer: CVPixelBuffer, completion: @escaping ([Detection]) -> Void) {
+    func detect(pixelBuffer: CVPixelBuffer, completion: @escaping ([RawDetection]) -> Void) {
         // 如果模型没加载成功，直接返回空数组
         guard let vnModel = vnModel else {
             completion([])
@@ -49,13 +49,14 @@ class Detector {
             }
             
             // compactMap：对数组中每个元素做转换，自动丢弃返回 nil 的元素
-            let detections = results.compactMap { observation -> Detection? in
+            let detections = results.compactMap { observation -> RawDetection? in
                 // 每个物体可能有多个候选标签，取置信度最高的第一个
                 guard let topLabel = observation.labels.first else { return nil }
                 // 只保留置信度超过 50% 的结果，过滤掉不太确定的
                 guard topLabel.confidence > 0.5 else { return nil }
                 
-                return Detection(
+                // Detector 只产出单帧原始结果，不负责分配跨帧稳定 ID。
+                return RawDetection(
                     label: topLabel.identifier,
                     confidence: topLabel.confidence,
                     boundingBox: observation.boundingBox
