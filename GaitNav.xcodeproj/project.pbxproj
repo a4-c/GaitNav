@@ -6,8 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		5BCAE7A32FBA0CDC005A1F2C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5B3B7EEB2F80179B0049DB45 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5B3B7EF22F80179B0049DB45;
+			remoteInfo = GaitNav;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		5B3B7EF32F80179B0049DB45 /* GaitNav.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GaitNav.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5BCAE79F2FBA0CDC005A1F2C /* GaitNavTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GaitNavTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +27,22 @@
 			path = GaitNav;
 			sourceTree = "<group>";
 		};
+		5BCAE7A02FBA0CDC005A1F2C /* GaitNavTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = GaitNavTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		5B3B7EF02F80179B0049DB45 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5BCAE79C2FBA0CDC005A1F2C /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				5B3B7EF52F80179B0049DB45 /* GaitNav */,
+				5BCAE7A02FBA0CDC005A1F2C /* GaitNavTests */,
 				5B3B7EF42F80179B0049DB45 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				5B3B7EF32F80179B0049DB45 /* GaitNav.app */,
+				5BCAE79F2FBA0CDC005A1F2C /* GaitNavTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,6 +95,29 @@
 			productReference = 5B3B7EF32F80179B0049DB45 /* GaitNav.app */;
 			productType = "com.apple.product-type.application";
 		};
+		5BCAE79E2FBA0CDC005A1F2C /* GaitNavTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5BCAE7A72FBA0CDC005A1F2C /* Build configuration list for PBXNativeTarget "GaitNavTests" */;
+			buildPhases = (
+				5BCAE79B2FBA0CDC005A1F2C /* Sources */,
+				5BCAE79C2FBA0CDC005A1F2C /* Frameworks */,
+				5BCAE79D2FBA0CDC005A1F2C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5BCAE7A42FBA0CDC005A1F2C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5BCAE7A02FBA0CDC005A1F2C /* GaitNavTests */,
+			);
+			name = GaitNavTests;
+			packageProductDependencies = (
+			);
+			productName = GaitNavTests;
+			productReference = 5BCAE79F2FBA0CDC005A1F2C /* GaitNavTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -77,11 +125,15 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2640;
+				LastSwiftUpdateCheck = 2650;
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					5B3B7EF22F80179B0049DB45 = {
 						CreatedOnToolsVersion = 26.4;
+					};
+					5BCAE79E2FBA0CDC005A1F2C = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 5B3B7EF22F80179B0049DB45;
 					};
 				};
 			};
@@ -100,12 +152,20 @@
 			projectRoot = "";
 			targets = (
 				5B3B7EF22F80179B0049DB45 /* GaitNav */,
+				5BCAE79E2FBA0CDC005A1F2C /* GaitNavTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		5B3B7EF12F80179B0049DB45 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5BCAE79D2FBA0CDC005A1F2C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +182,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5BCAE79B2FBA0CDC005A1F2C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5BCAE7A42FBA0CDC005A1F2C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5B3B7EF22F80179B0049DB45 /* GaitNav */;
+			targetProxy = 5BCAE7A32FBA0CDC005A1F2C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		5B3B7EFC2F80179C0049DB45 /* Debug */ = {
@@ -320,6 +395,50 @@
 			};
 			name = Release;
 		};
+		5BCAE7A52FBA0CDC005A1F2C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 85367PNUHT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cyc23.GaitNavTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GaitNav.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GaitNav";
+			};
+			name = Debug;
+		};
+		5BCAE7A62FBA0CDC005A1F2C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 85367PNUHT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cyc23.GaitNavTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GaitNav.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GaitNav";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -337,6 +456,15 @@
 			buildConfigurations = (
 				5B3B7EFF2F80179C0049DB45 /* Debug */,
 				5B3B7F002F80179C0049DB45 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5BCAE7A72FBA0CDC005A1F2C /* Build configuration list for PBXNativeTarget "GaitNavTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5BCAE7A52FBA0CDC005A1F2C /* Debug */,
+				5BCAE7A62FBA0CDC005A1F2C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
