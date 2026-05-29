@@ -19,8 +19,15 @@ struct SettingsView: View {
     // 请求打开标定页面的回调
     var onCalibrateRequested: () -> Void
     
+    // [实验] 当前检测列表，距离日志实验用，实验结束后删除
+    var detections: [Detection]
+    
     // [实验] CSV 复制成功的提示状态，实验结束后删除
     @State private var showCopiedConfirmation = false
+    
+    // [实验] 距离日志的提示状态，实验结束后删除
+    @State private var showDistanceCopiedConfirmation = false
+    @State private var showNoDetectionWarning = false
     
     var body: some View {
         ZStack {
@@ -286,6 +293,143 @@ struct SettingsView: View {
                                         )
                                     }
                                     .disabled(stepConverter.peakLogCount == 0)
+                                }
+                            }
+                        }
+                        
+                        // =================================================
+                        // [实验] 距离日志调试区（实验结束后删除整个 section）
+                        // =================================================
+                        
+                        settingsSection(title: "Distance Logging (Debug)") {
+                            VStack(spacing: 14) {
+                                // 已记录条数
+                                HStack {
+                                    Image(systemName: "list.bullet.clipboard")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(Theme.textSecondary)
+                                    Text("\(stepConverter.distanceLogCount) entries logged")
+                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                        .foregroundColor(Theme.textSecondary)
+                                    Spacer()
+                                    // 实时显示当前最近物体的距离，方便确认读数稳定
+                                    if let nearest = detections
+                                        .filter({ $0.distance != nil })
+                                        .min(by: { $0.distance! < $1.distance! }),
+                                       let dist = nearest.distance {
+                                        Text("\(nearest.label) \(String(format: "%.2f", dist))m")
+                                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                            .foregroundColor(Theme.accent)
+                                    } else {
+                                        Text("No detection")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(Theme.textDisabled)
+                                    }
+                                }
+                                
+                                // 提示信息（复制成功 / 无检测物体）
+                                if showDistanceCopiedConfirmation {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 12))
+                                        Text("CSV copied to clipboard")
+                                            .font(.system(size: 12, weight: .medium))
+                                    }
+                                    .foregroundColor(Theme.safe)
+                                    .transition(.opacity)
+                                }
+                                if showNoDetectionWarning {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 12))
+                                        Text("No object detected — point camera at target")
+                                            .font(.system(size: 12, weight: .medium))
+                                    }
+                                    .foregroundColor(Theme.warning)
+                                    .transition(.opacity)
+                                }
+                                
+                                // 三个操作按钮：Log Distance / Copy CSV / Clear
+                                HStack(spacing: 10) {
+                                    // Log Distance 按钮
+                                    Button(action: {
+                                        showNoDetectionWarning = false
+                                        let success = stepConverter.logDistance(from: detections)
+                                        if !success {
+                                            // 没有检测到任何有距离信息的物体
+                                            withAnimation { showNoDetectionWarning = true }
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                                withAnimation { showNoDetectionWarning = false }
+                                            }
+                                        }
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "plus.circle")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Text("Log")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        .foregroundColor(Theme.accent)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .background(Theme.accent.opacity(0.12))
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
+                                                .stroke(Theme.accent.opacity(0.25), lineWidth: 1)
+                                        )
+                                    }
+                                    
+                                    // Copy CSV 按钮
+                                    Button(action: {
+                                        let csv = stepConverter.exportDistanceLogCSV()
+                                        UIPasteboard.general.string = csv
+                                        withAnimation { showDistanceCopiedConfirmation = true }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                            withAnimation { showDistanceCopiedConfirmation = false }
+                                        }
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "doc.on.doc")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Text("Copy CSV")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        .foregroundColor(stepConverter.distanceLogCount == 0 ? Theme.textDisabled : Theme.warning)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .background(stepConverter.distanceLogCount == 0 ? Theme.backgroundElevated : Theme.warning.opacity(0.12))
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
+                                                .stroke(stepConverter.distanceLogCount == 0 ? Theme.border : Theme.warning.opacity(0.25), lineWidth: 1)
+                                        )
+                                    }
+                                    .disabled(stepConverter.distanceLogCount == 0)
+                                    
+                                    // Clear 按钮
+                                    Button(action: {
+                                        stepConverter.clearDistanceLog()
+                                        showDistanceCopiedConfirmation = false
+                                        showNoDetectionWarning = false
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "trash")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Text("Clear")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        .foregroundColor(stepConverter.distanceLogCount == 0 ? Theme.textDisabled : Theme.textSecondary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .background(Theme.backgroundElevated)
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
+                                                .stroke(Theme.border, lineWidth: 1)
+                                        )
+                                    }
+                                    .disabled(stepConverter.distanceLogCount == 0)
                                 }
                             }
                         }

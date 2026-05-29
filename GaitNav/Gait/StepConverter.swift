@@ -54,6 +54,25 @@ class StepConverter: ObservableObject {
     @Published var peakLogCount: Int = 0
     
     // =====================================================================
+    // [实验] 距离日志（Distance Estimation Accuracy 实验用）
+    // 每次点击 Log Distance 时，读取最近检测物体的 stableDistance，实验结束后删除
+    // =====================================================================
+    
+    // 单条距离记录
+    struct DistanceLogEntry {
+        let trialID: Int          // 试验编号（自动递增）
+        let estimatedDistance: Float  // 系统估计距离（stableDistance）
+        let objectLabel: String   // 检测到的物体标签
+        let timestamp: Date       // 记录时间
+    }
+    
+    // 距离日志数组
+    private(set) var distanceLog: [DistanceLogEntry] = []
+    
+    // 已记录的距离数量（@Published 驱动 UI 实时显示计数）
+    @Published var distanceLogCount: Int = 0
+    
+    // =====================================================================
     // 加速度计 & 波峰检测
     // =====================================================================
     
@@ -487,6 +506,53 @@ class StepConverter: ObservableObject {
         peakLog.removeAll()
         peakLogCount = 0
         isLoggingPeaks = false
+    }
+    
+    // =====================================================================
+    // [实验] 距离日志控制方法（实验结束后删除）
+    // =====================================================================
+    
+    // 从当前检测列表中找到最近的物体，记录一条距离日志
+    // 返回记录成功与否（没有可用检测时返回 false）
+    @discardableResult
+    func logDistance(from detections: [Detection]) -> Bool {
+        // 找到有距离信息的最近物体
+        guard let nearest = detections
+            .filter({ $0.distance != nil })
+            .min(by: { $0.distance! < $1.distance! }),
+              let distance = nearest.distance
+        else { return false }
+        
+        let entry = DistanceLogEntry(
+            trialID: distanceLog.count + 1,
+            estimatedDistance: distance,
+            objectLabel: nearest.label,
+            timestamp: Date()
+        )
+        distanceLog.append(entry)
+        distanceLogCount = distanceLog.count
+        return true
+    }
+    
+    // 导出距离日志为 CSV 字符串
+    // target_distance 留空，实验后在 CSV 中手动填入真实距离
+    func exportDistanceLogCSV() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        var csv = "trial_id,target_distance,estimated_distance,object_label,timestamp\n"
+        for entry in distanceLog {
+            let ts = formatter.string(from: entry.timestamp)
+            let line = "\(entry.trialID),,\(String(format: "%.4f", entry.estimatedDistance)),\(entry.objectLabel),\(ts)"
+            csv += line + "\n"
+        }
+        return csv
+    }
+    
+    // 清空距离日志
+    func clearDistanceLog() {
+        distanceLog.removeAll()
+        distanceLogCount = 0
     }
     
     // =====================================================================

@@ -119,7 +119,8 @@ struct ContentView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                         showCalibration = true
                     }
-                }
+                },
+                detections: camera.detections  // [实验] 距离日志实验用，实验结束后删除
             )
             .onAppear {
                 speech.stop()
