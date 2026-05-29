@@ -45,6 +45,36 @@ class CameraManager: NSObject, ObservableObject {
     // Date() 表示"现在这一刻"
     private var lastFPSUpdate = Date()
     
+    // =====================================================================
+    // [实验] 逐帧性能日志（Real-time Performance 实验用）
+    // 记录每帧的检测延迟、FPS、物体数量，实验结束后删除
+    // =====================================================================
+    
+    // 单条逐帧性能记录
+    struct PerfLogEntry {
+        let frameID: Int              // 帧编号（从 1 开始）
+        let scenario: String          // 当前场景编号（S1–S6）
+        let timestamp: Date           // 帧处理完成时刻
+        let detectionLatencyMs: Double // 端到端检测延迟（毫秒）
+        let fps: Double               // 当前 FPS 读数
+        let objectCount: Int          // 该帧检测到的物体数量
+    }
+    
+    // 性能日志数组
+    private(set) var perfLog: [PerfLogEntry] = []
+    
+    // 是否正在记录性能数据（@Published 驱动 UI 状态指示）
+    @Published var isPerfLogging = false
+    
+    // 已记录的帧数（@Published 驱动 UI 实时显示计数）
+    @Published var perfLogCount: Int = 0
+    
+    // 当前场景编号，由实验者在 SettingsView 中手动选择
+    @Published var currentScenario: String = "S1"
+    
+    // 当前帧开始处理的时刻（用于计算该帧的端到端延迟）
+    private var frameStartTime: Date?
+    
     // 启动 AR 会话，由外部在界面准备好后调用
     func start() {
         // 1. 先启动 AR 会话（非阻塞，摄像头很快就能出画面）
@@ -111,6 +141,9 @@ extension CameraManager: ARSessionDelegate {
         
         // 标记为正在处理
         isProcessing = true
+        
+        // [实验] 记录该帧开始处理的时刻
+        frameStartTime = Date()
         
         // 从 ARFrame 中取出摄像头画面
         // capturedImage 拿到的是 CVPixelBuffer
@@ -189,6 +222,21 @@ extension CameraManager: ARSessionDelegate {
                 
                 // 更新帧率统计
                 self.updateFPS()
+                
+                // [实验] 记录该帧的性能数据
+                if self.isPerfLogging, let startTime = self.frameStartTime {
+                    let latencyMs = Date().timeIntervalSince(startTime) * 1000.0
+                    let entry = PerfLogEntry(
+                        frameID: self.perfLog.count + 1,
+                        scenario: self.currentScenario,
+                        timestamp: Date(),
+                        detectionLatencyMs: latencyMs,
+                        fps: self.fps,
+                        objectCount: self.detections.count
+                    )
+                    self.perfLog.append(entry)
+                    self.perfLogCount = self.perfLog.count
+                }
             }
         }
     }
@@ -204,5 +252,37 @@ extension CameraManager: ARSessionDelegate {
             frameCount = 0
             lastFPSUpdate = now
         }
+    }
+    
+    // =====================================================================
+    // [实验] 性能日志控制方法（实验结束后删除）
+    // =====================================================================
+    
+    // 开始记录逐帧性能数据
+    func startPerfLogging() {
+        isPerfLogging = true
+    }
+    
+    // 停止记录并导出 CSV 字符串
+    func stopPerfLoggingAndExportCSV() -> String {
+        isPerfLogging = false
+        
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        var csv = "frame_id,scenario,timestamp,detection_latency_ms,fps,object_count\n"
+        for entry in perfLog {
+            let ts = formatter.string(from: entry.timestamp)
+            let line = "\(entry.frameID),\(entry.scenario),\(ts),\(String(format: "%.2f", entry.detectionLatencyMs)),\(String(format: "%.1f", entry.fps)),\(entry.objectCount)"
+            csv += line + "\n"
+        }
+        return csv
+    }
+    
+    // 清空性能日志
+    func clearPerfLog() {
+        perfLog.removeAll()
+        perfLogCount = 0
+        isPerfLogging = false
     }
 }

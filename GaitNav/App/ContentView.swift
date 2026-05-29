@@ -120,7 +120,8 @@ struct ContentView: View {
                         showCalibration = true
                     }
                 },
-                detections: camera.detections  // [实验] 距离日志实验用，实验结束后删除
+                detections: camera.detections,  // [实验] 距离日志实验用，实验结束后删除
+                cameraManager: camera           // [实验] 性能日志实验用，实验结束后删除
             )
             .onAppear {
                 speech.stop()
