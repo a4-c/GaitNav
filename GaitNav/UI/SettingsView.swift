@@ -1,4 +1,6 @@
 import SwiftUI
+// [实验] UIPasteboard 用于复制 CSV 到剪贴板，实验结束后删除
+import UIKit
 
 // 设置页面
 //
@@ -16,6 +18,9 @@ struct SettingsView: View {
     
     // 请求打开标定页面的回调
     var onCalibrateRequested: () -> Void
+    
+    // [实验] CSV 复制成功的提示状态，实验结束后删除
+    @State private var showCopiedConfirmation = false
     
     var body: some View {
         ZStack {
@@ -172,6 +177,116 @@ struct SettingsView: View {
                                 aboutRow(title: "Depth Sensor", value: "LiDAR")
                                 Divider().background(Theme.divider)
                                 aboutRow(title: "Positioning", value: "ARKit 6DoF")
+                            }
+                        }
+                        
+                        // =================================================
+                        // [实验] 波峰日志调试区（实验结束后删除整个 section）
+                        // =================================================
+                        
+                        settingsSection(title: "Peak Logging (Debug)") {
+                            VStack(spacing: 14) {
+                                // 状态指示：录制中 / 空闲 + 已记录波峰数
+                                HStack {
+                                    Circle()
+                                        .fill(stepConverter.isLoggingPeaks ? Theme.danger : Theme.textDisabled)
+                                        .frame(width: 8, height: 8)
+                                    Text(stepConverter.isLoggingPeaks ? "Recording..." : "Idle")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(stepConverter.isLoggingPeaks ? Theme.danger : Theme.textSecondary)
+                                    Spacer()
+                                    Text("\(stepConverter.peakLogCount) peaks")
+                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                        .foregroundColor(Theme.textSecondary)
+                                }
+                                
+                                // 复制成功提示
+                                if showCopiedConfirmation {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 12))
+                                        Text("CSV copied to clipboard")
+                                            .font(.system(size: 12, weight: .medium))
+                                    }
+                                    .foregroundColor(Theme.safe)
+                                    .transition(.opacity)
+                                }
+                                
+                                // 三个操作按钮：Start / Stop & Copy / Clear
+                                HStack(spacing: 10) {
+                                    // Start 按钮
+                                    Button(action: {
+                                        stepConverter.startPeakLogging()
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "record.circle")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Text("Start")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        .foregroundColor(stepConverter.isLoggingPeaks ? Theme.textDisabled : Theme.safe)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .background(stepConverter.isLoggingPeaks ? Theme.backgroundElevated : Theme.safe.opacity(0.12))
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
+                                                .stroke(stepConverter.isLoggingPeaks ? Theme.border : Theme.safe.opacity(0.25), lineWidth: 1)
+                                        )
+                                    }
+                                    .disabled(stepConverter.isLoggingPeaks)
+                                    
+                                    // Stop & Copy 按钮
+                                    Button(action: {
+                                        let csv = stepConverter.stopPeakLoggingAndExportCSV()
+                                        UIPasteboard.general.string = csv
+                                        // 显示复制成功提示，2 秒后自动消失
+                                        withAnimation { showCopiedConfirmation = true }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                            withAnimation { showCopiedConfirmation = false }
+                                        }
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "stop.circle")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Text("Stop & Copy")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        .foregroundColor(!stepConverter.isLoggingPeaks ? Theme.textDisabled : Theme.warning)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .background(!stepConverter.isLoggingPeaks ? Theme.backgroundElevated : Theme.warning.opacity(0.12))
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
+                                                .stroke(!stepConverter.isLoggingPeaks ? Theme.border : Theme.warning.opacity(0.25), lineWidth: 1)
+                                        )
+                                    }
+                                    .disabled(!stepConverter.isLoggingPeaks)
+                                    
+                                    // Clear 按钮
+                                    Button(action: {
+                                        stepConverter.clearPeakLog()
+                                        showCopiedConfirmation = false
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "trash")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Text("Clear")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        .foregroundColor(stepConverter.peakLogCount == 0 ? Theme.textDisabled : Theme.textSecondary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .background(Theme.backgroundElevated)
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
+                                                .stroke(Theme.border, lineWidth: 1)
+                                        )
+                                    }
+                                    .disabled(stepConverter.peakLogCount == 0)
+                                }
                             }
                         }
                     }

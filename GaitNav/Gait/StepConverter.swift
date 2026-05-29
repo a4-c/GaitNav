@@ -32,6 +32,28 @@ class StepConverter: ObservableObject {
     // let dynamicEstimator = DynamicStepEstimator()
     
     // =====================================================================
+    // [实验] 波峰日志（Step Detection Threshold Selection 实验用）
+    // 记录所有波峰的原始数据（不经过阈值过滤），实验结束后删除
+    // =====================================================================
+    
+    // 单条波峰记录
+    struct PeakLogEntry {
+        let timestamp: Date       // 波峰检测到的时间
+        let peakValue: Double     // 波峰处的合加速度
+        let valleyValue: Double   // 波峰前最近一次谷值
+        let amplitude: Double     // 谷到峰振幅 = peakValue - valleyValue
+    }
+    
+    // 波峰日志数组
+    private(set) var peakLog: [PeakLogEntry] = []
+    
+    // 是否正在记录波峰（@Published 驱动 UI 状态指示）
+    @Published private(set) var isLoggingPeaks = false
+    
+    // 已记录的波峰数量（@Published 驱动 UI 实时显示计数）
+    @Published var peakLogCount: Int = 0
+    
+    // =====================================================================
     // 加速度计 & 波峰检测
     // =====================================================================
     
@@ -373,6 +395,19 @@ class StepConverter: ObservableObject {
             // 计算谷到峰的振幅
             let amplitude = lastAcceleration - lastValley
             
+            // [实验] 记录所有波峰的原始数据（不经过任何阈值过滤）
+            // 插入位置在振幅计算之后、阈值判断之前，确保捕获全部波峰
+            if isLoggingPeaks {
+                let entry = PeakLogEntry(
+                    timestamp: Date(),
+                    peakValue: lastAcceleration,
+                    valleyValue: lastValley,
+                    amplitude: amplitude
+                )
+                peakLog.append(entry)
+                peakLogCount = peakLog.count
+            }
+            
             // 检查条件1：波峰够大吗？（绝对阈值）
             // 检查条件2：振幅够大吗？（相对阈值，过滤车辆振动等低振幅噪声）
             if lastAcceleration > peakThreshold && amplitude > amplitudeThreshold {
@@ -421,52 +456,86 @@ class StepConverter: ObservableObject {
     }
     
     // =====================================================================
+    // [实验] 波峰日志控制方法（实验结束后删除）
+    // =====================================================================
+    
+    // 开始记录波峰
+    func startPeakLogging() {
+        isLoggingPeaks = true
+    }
+    
+    // 停止记录并导出 CSV 字符串
+    // 返回格式：timestamp,peak_value,valley_value,amplitude
+    func stopPeakLoggingAndExportCSV() -> String {
+        isLoggingPeaks = false
+        
+        // ISO 8601 日期格式化器，精确到毫秒
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        var csv = "timestamp,peak_value,valley_value,amplitude\n"
+        for entry in peakLog {
+            let ts = formatter.string(from: entry.timestamp)
+            let line = "\(ts),\(String(format: "%.6f", entry.peakValue)),\(String(format: "%.6f", entry.valleyValue)),\(String(format: "%.6f", entry.amplitude))"
+            csv += line + "\n"
+        }
+        return csv
+    }
+    
+    // 清空日志
+    func clearPeakLog() {
+        peakLog.removeAll()
+        peakLogCount = 0
+        isLoggingPeaks = false
+    }
+    
+    // =====================================================================
     // For testing
     // =====================================================================
     
 //    private func checkForStep(data: CMAccelerometerData) {
-//        
+//
 //        let x = data.acceleration.x
 //        let y = data.acceleration.y
 //        let z = data.acceleration.z
 //        let magnitude = sqrt(x * x + y * y + z * z)
-//        
+//
 //        // 提取到 processAcceleration，使波峰检测算法可被单元测试直接调用
 //        processAcceleration(magnitude)
 //    }
-//    
+//
 //    // 波峰检测核心算法：接收合加速度值，判断是否构成一步并分发事件
 //    // 从 checkForStep 中提取，使单元测试可以直接喂入数值序列
 //    // 而不需要构造 CMAccelerometerData（该类没有公开的初始化器）
 //    func processAcceleration(_ magnitude: Double) {
 //
 //        if magnitude > lastAcceleration {
-//            
+//
 //            if !isRising {
 //                lastValley = lastAcceleration
 //                isRising = true
 //            }
-//            
+//
 //        } else if isRising {
-//            
+//
 //            isRising = false
-//            
+//
 //            let amplitude = lastAcceleration - lastValley
-//            
+//
 //            print("valley=\(String(format: "%.3f", lastValley)) peak=\(String(format: "%.3f", lastAcceleration)) amp=\(String(format: "%.3f", amplitude))")
-//            
+//
 //            if lastAcceleration > peakThreshold && amplitude > amplitudeThreshold {
 //
 //                let now = Date()
 //                if now.timeIntervalSince(lastStepTime) > minStepInterval {
-//                    
+//
 //                    lastStepTime = now
-//                    
+//
 //                    switch currentMode {
-//                    
+//
 //                    case .calibration:
 //                        calibrator.handleStep()
-//                    
+//
 //                    case .live:
 //                        dynamicEstimator.handleStep()
 //                        objectWillChange.send()
