@@ -111,10 +111,11 @@ class DistanceEstimator {
         let bboxArea = boundingBox.width * boundingBox.height
         
         // 近距离阈值：bbox 面积 > 此值时触发自适应
-        // 实测：椅子在 ~1.0m 处的归一化 bbox 面积约 0.08–0.15，
-        //      在 ~1.5m 处约 0.03–0.06
-        //      取 0.08 确保 ≤ 1.0m 触发自适应，≥ 1.5m 保持原策略
-        let closeRangeAreaThreshold: CGFloat = 0.08
+        // 实测归一化 bbox 面积（椅子，iPhone 持于胸前约 1.2m 高）：
+        // 0.5m → 0.657，1.0m → 0.448，1.5m → 0.243
+        // 取 1.0m 与 1.5m 的中点 (0.448 + 0.243) / 2 ≈ 0.35
+        // 确保 ≤ 1.0m（过高估区间）触发自适应，≥ 1.5m（MPE ≤ 5%）保持原策略
+        let closeRangeAreaThreshold: CGFloat = 0.35
         let isCloseRange = bboxArea > closeRangeAreaThreshold
         
         // 自适应水平 margin：
