@@ -1,7 +1,7 @@
 import ARKit
 import Combine
 
-// CameraManager：ARSession 的管理者和每帧处理的协调者
+// 感知流水线：ARSession 的管理者和每帧处理的协调者
 //
 // 职责：
 //   1. 创建和配置 ARSession（摄像头 + LiDAR + 世界追踪）
@@ -10,7 +10,7 @@ import Combine
 //
 // ObservableObject：告诉 SwiftUI "我是一个可观察的数据源"
 // 当里面带 @Published 标记的属性变化时，界面会自动刷新
-class CameraManager: NSObject, ObservableObject {
+class PerceptionPipeline: NSObject, ObservableObject {
     
     // 创建 ARSession 实例
     // ARSession 是整个 AR 系统的大脑
@@ -124,10 +124,10 @@ class CameraManager: NSObject, ObservableObject {
     }
 }
 
-// extension：给 CameraManager 额外添加 ARSessionDelegate 协议的实现
+// extension：给 PerceptionPipeline 额外添加 ARSessionDelegate 协议的实现
 // ARSessionDelegate 定义了一组方法，ARSession 在特定时机会调用它们
 // 我们只用到其中的 session(_:didUpdate:)，即每帧更新时的回调
-extension CameraManager: ARSessionDelegate {
+extension PerceptionPipeline: ARSessionDelegate {
     
     // ARKit 每产出一帧数据就调用这个方法
     // frame 参数是 ARFrame 类型，包含这一帧的所有信息

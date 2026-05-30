@@ -25,8 +25,8 @@ struct SettingsView: View {
     // [实验] 当前检测列表，距离日志实验用，实验结束后删除
     var detections: [Detection]
     
-    // [实验] CameraManager 引用，性能日志实验用，实验结束后删除
-    @ObservedObject var cameraManager: CameraManager
+    // [实验] PerceptionPipeline 引用，性能日志实验用，实验结束后删除
+    @ObservedObject var perceptionPipeline: PerceptionPipeline
     
     // [实验] 距离日志的提示状态，实验结束后删除
     @State private var showDistanceCopiedConfirmation = false
@@ -425,13 +425,13 @@ struct SettingsView: View {
                                 // 状态指示 + 帧计数
                                 HStack {
                                     Circle()
-                                        .fill(cameraManager.isPerfLogging ? Theme.danger : Theme.textDisabled)
+                                        .fill(perceptionPipeline.isPerfLogging ? Theme.danger : Theme.textDisabled)
                                         .frame(width: 8, height: 8)
-                                    Text(cameraManager.isPerfLogging ? "Recording..." : "Idle")
+                                    Text(perceptionPipeline.isPerfLogging ? "Recording..." : "Idle")
                                         .font(.system(size: 13, weight: .medium))
-                                        .foregroundColor(cameraManager.isPerfLogging ? Theme.danger : Theme.textSecondary)
+                                        .foregroundColor(perceptionPipeline.isPerfLogging ? Theme.danger : Theme.textSecondary)
                                     Spacer()
-                                    Text("\(cameraManager.perfLogCount) frames")
+                                    Text("\(perceptionPipeline.perfLogCount) frames")
                                         .font(.system(size: 13, weight: .medium, design: .monospaced))
                                         .foregroundColor(Theme.textSecondary)
                                 }
@@ -441,7 +441,7 @@ struct SettingsView: View {
                                     Text("Scenario")
                                         .font(.system(size: 12, weight: .medium))
                                         .foregroundColor(Theme.textSecondary)
-                                    Picker("Scenario", selection: $cameraManager.currentScenario) {
+                                    Picker("Scenario", selection: $perceptionPipeline.currentScenario) {
                                         Text("S1").tag("S1")
                                         Text("S2").tag("S2")
                                         Text("S3").tag("S3")
@@ -468,7 +468,7 @@ struct SettingsView: View {
                                 HStack(spacing: 10) {
                                     // Start Perf Log 按钮
                                     Button(action: {
-                                        cameraManager.startPerfLogging()
+                                        perceptionPipeline.startPerfLogging()
                                     }) {
                                         HStack(spacing: 4) {
                                             Image(systemName: "record.circle")
@@ -476,21 +476,21 @@ struct SettingsView: View {
                                             Text("Start")
                                                 .font(.system(size: 13, weight: .semibold))
                                         }
-                                        .foregroundColor(cameraManager.isPerfLogging ? Theme.textDisabled : Theme.safe)
+                                        .foregroundColor(perceptionPipeline.isPerfLogging ? Theme.textDisabled : Theme.safe)
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 10)
-                                        .background(cameraManager.isPerfLogging ? Theme.backgroundElevated : Theme.safe.opacity(0.12))
+                                        .background(perceptionPipeline.isPerfLogging ? Theme.backgroundElevated : Theme.safe.opacity(0.12))
                                         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(cameraManager.isPerfLogging ? Theme.border : Theme.safe.opacity(0.25), lineWidth: 1)
+                                                .stroke(perceptionPipeline.isPerfLogging ? Theme.border : Theme.safe.opacity(0.25), lineWidth: 1)
                                         )
                                     }
-                                    .disabled(cameraManager.isPerfLogging)
+                                    .disabled(perceptionPipeline.isPerfLogging)
                                     
                                     // Stop & Copy 按钮
                                     Button(action: {
-                                        let csv = cameraManager.stopPerfLoggingAndExportCSV()
+                                        let csv = perceptionPipeline.stopPerfLoggingAndExportCSV()
                                         UIPasteboard.general.string = csv
                                         withAnimation { showPerfCopiedConfirmation = true }
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -503,21 +503,21 @@ struct SettingsView: View {
                                             Text("Stop & Copy")
                                                 .font(.system(size: 13, weight: .semibold))
                                         }
-                                        .foregroundColor(!cameraManager.isPerfLogging ? Theme.textDisabled : Theme.warning)
+                                        .foregroundColor(!perceptionPipeline.isPerfLogging ? Theme.textDisabled : Theme.warning)
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 10)
-                                        .background(!cameraManager.isPerfLogging ? Theme.backgroundElevated : Theme.warning.opacity(0.12))
+                                        .background(!perceptionPipeline.isPerfLogging ? Theme.backgroundElevated : Theme.warning.opacity(0.12))
                                         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(!cameraManager.isPerfLogging ? Theme.border : Theme.warning.opacity(0.25), lineWidth: 1)
+                                                .stroke(!perceptionPipeline.isPerfLogging ? Theme.border : Theme.warning.opacity(0.25), lineWidth: 1)
                                         )
                                     }
-                                    .disabled(!cameraManager.isPerfLogging)
+                                    .disabled(!perceptionPipeline.isPerfLogging)
                                     
                                     // Clear 按钮
                                     Button(action: {
-                                        cameraManager.clearPerfLog()
+                                        perceptionPipeline.clearPerfLog()
                                         showPerfCopiedConfirmation = false
                                     }) {
                                         HStack(spacing: 4) {
@@ -526,7 +526,7 @@ struct SettingsView: View {
                                             Text("Clear")
                                                 .font(.system(size: 13, weight: .semibold))
                                         }
-                                        .foregroundColor(cameraManager.perfLogCount == 0 ? Theme.textDisabled : Theme.textSecondary)
+                                        .foregroundColor(perceptionPipeline.perfLogCount == 0 ? Theme.textDisabled : Theme.textSecondary)
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 10)
                                         .background(Theme.backgroundElevated)
@@ -536,7 +536,7 @@ struct SettingsView: View {
                                                 .stroke(Theme.border, lineWidth: 1)
                                         )
                                     }
-                                    .disabled(cameraManager.perfLogCount == 0)
+                                    .disabled(perceptionPipeline.perfLogCount == 0)
                                 }
                             }
                         }

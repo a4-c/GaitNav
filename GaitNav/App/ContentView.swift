@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     
-    @StateObject private var camera = CameraManager()
+    @StateObject private var perceptionPipeline = PerceptionPipeline()
     @StateObject private var stepConverter = StepConverter()
     
     @State private var showCalibration = false
@@ -24,14 +24,14 @@ struct ContentView: View {
             // 底层：AR 摄像头画面
             // =============================================================
             
-            CameraPreview(session: camera.session)
+            CameraPreview(session: perceptionPipeline.session)
                 .ignoresSafeArea()
             
             // =============================================================
             // 中层：检测框叠加层
             // =============================================================
             
-            DetectionOverlay(detections: camera.detections, stepConverter: stepConverter)
+            DetectionOverlay(detections: perceptionPipeline.detections, stepConverter: stepConverter)
                 .ignoresSafeArea()
             
             // =============================================================
@@ -71,9 +71,9 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            camera.start()
+            perceptionPipeline.start()
             
-            stepConverter.setARSession(camera.session)
+            stepConverter.setARSession(perceptionPipeline.session)
             stepConverter.start()
             
             let fm = FeedbackManager(speech: speech, stepConverter: stepConverter, distanceMode: feedbackDistanceMode)
@@ -81,14 +81,14 @@ struct ContentView: View {
             
             stepConverter.onStepDetected = { [self] in
                 guard !showCalibration, !showGaitProfiler, !showSettings, isFeedbackActive else { return }
-                fm.handleStep(with: camera.detections)
+                fm.handleStep(with: perceptionPipeline.detections)
             }
         }
         .onDisappear {
             stepConverter.stop()
             speech.stop()
         }
-        .onReceive(camera.$fps) { fps in
+        .onReceive(perceptionPipeline.$fps) { fps in
             if fps > 0 && !isCameraReady {
                 withAnimation(.easeOut(duration: 0.5)) {
                     isCameraReady = true
@@ -97,7 +97,7 @@ struct ContentView: View {
                 speech.speakInterrupting("Ready. Point your camera and tap Start.")
             }
         }
-        .onReceive(camera.$detections) { detections in
+        .onReceive(perceptionPipeline.$detections) { detections in
             guard isFeedbackActive, !showCalibration, !showGaitProfiler, !showSettings else { return }
             feedbackManager?.update(with: detections)
         }
@@ -135,8 +135,8 @@ struct ContentView: View {
                         showGaitProfiler = true
                     }
                 },
-                detections: camera.detections,  // [实验] 距离日志实验用，实验结束后删除
-                cameraManager: camera           // [实验] 性能日志实验用，实验结束后删除
+                detections: perceptionPipeline.detections,  // [实验] 距离日志实验用，实验结束后删除
+                perceptionPipeline: perceptionPipeline      // [实验] 性能日志实验用，实验结束后删除
             )
             .onAppear {
                 speech.stop()
@@ -335,7 +335,7 @@ struct ContentView: View {
                     Image(systemName: "eye.fill")
                         .font(.system(size: 14))
                         .foregroundColor(Theme.safe)
-                    Text("\(camera.detections.count)")
+                    Text("\(perceptionPipeline.detections.count)")
                         .font(.system(size: 16, weight: .bold, design: .monospaced))
                         .foregroundColor(Theme.textPrimary)
                 }
@@ -344,7 +344,7 @@ struct ContentView: View {
                     .fill(Theme.textDisabled)
                     .frame(width: 3, height: 3)
                 
-                Text("\(String(format: "%.0f", camera.fps)) FPS")
+                Text("\(String(format: "%.0f", perceptionPipeline.fps)) FPS")
                     .font(.system(size: 16, weight: .medium, design: .monospaced))
                     .foregroundColor(Theme.textSecondary)
             }
