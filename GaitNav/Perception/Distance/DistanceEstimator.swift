@@ -76,9 +76,11 @@ class DistanceEstimator {
         let cy = intrinsics[2][1] * scaleY
         
         // ===================================================================
-        // 第二步：确定采样区域（检测框中间 60%）
+        // 第二步：确定采样区域
         // ===================================================================
         
+        // 中远/远距离采样策略
+        //
         // 不采整个检测框，而是只采中间 60% 的区域
         // 因为 YOLO 的检测框不是精确贴合物体的——边缘部分经常包含背景
         // 如果采到了背景的深度值，距离就会算错
@@ -92,13 +94,48 @@ class DistanceEstimator {
         //   │  └────────────┘  │
         //   │  20% 边距（跳过）  │
         //   └──────────────────┘
-        let margin: CGFloat = 0.2
+        //
+        // 近距离自适应采样策略
+        //
+        // 问题：当物体非常近（≤ ~1.0m）时，bounding box 占据画面的大部分，
+        //      即使取中间 60%，仍有大量像素穿过物体间隙（如椅子腿之间的空隙、
+        //      椅背镂空）采到了背景。背景深度远大于物体深度，导致中位数被拉高，
+        //      系统性地高估距离（实测：0.5m 处 MPE = 58.3%，高估约 0.29m）
+        //
+        // 策略：用 bounding box 面积占比作为远近的代理指标，近距离时执行三项自适应调整：
+        //      1. 增大水平 margin（0.20 → 0.30），收紧采样区域
+        //      2. 垂直方向偏向 bounding box 下半部
+        //      3. 使用第 25 百分位代替中位数（见第六步）
+        
+        // bounding box 面积占比（归一化坐标下，范围 0–1）
+        let bboxArea = boundingBox.width * boundingBox.height
+        
+        // 近距离阈值：bbox 面积 > 此值时触发自适应
+        // 实测：椅子在 ~1.0m 处的归一化 bbox 面积约 0.08–0.15，
+        //      在 ~1.5m 处约 0.03–0.06
+        //      取 0.08 确保 ≤ 1.0m 触发自适应，≥ 1.5m 保持原策略
+        let closeRangeAreaThreshold: CGFloat = 0.08
+        let isCloseRange = bboxArea > closeRangeAreaThreshold
+        
+        // 自适应水平 margin：
+        // 中远距离：0.20（采中间 60%，实验验证 1.5–5.0m MPE ≤ 5%）
+        // 近距离：  0.30（收紧到中间 40%，大幅减少边缘背景像素混入）
+        let margin: CGFloat = isCloseRange ? 0.30 : 0.20
+        
+        // 自适应垂直 margin：近距离时向下偏移采样区域
+        // 正常：上下对称，各裁 margin
+        // 近距离：底部只裁 10%（保留更多底部区域），顶部裁 40%
+        // 原因：物体底部（腿部/底座）通常更实心，且底部距离
+        //      更能代表行走时需要绕过的障碍物实际位置
+        let bottomMarginY: CGFloat = isCloseRange ? 0.10 : margin
+        let topMarginY: CGFloat    = isCloseRange ? 0.40 : margin
         
         // 在 Vision 坐标系中，计算缩小后的采样区域的四个边界
+        // 水平方向使用对称 margin，垂直方向使用自适应 margin
         let visionXStart = boundingBox.minX + margin * boundingBox.width
         let visionXEnd   = boundingBox.maxX - margin * boundingBox.width
-        let visionYStart = boundingBox.minY + margin * boundingBox.height
-        let visionYEnd   = boundingBox.maxY - margin * boundingBox.height
+        let visionYStart = boundingBox.minY + bottomMarginY * boundingBox.height
+        let visionYEnd   = boundingBox.maxY - topMarginY * boundingBox.height
         
         // 坐标映射：Vision 竖屏归一化坐标 → 深度图横屏像素坐标
         //
@@ -292,10 +329,20 @@ class DistanceEstimator {
         // 如果没有任何有效的采样点，返回 nil
         guard !horizontalDistances.isEmpty else { return nil }
         
-        // 排序后取中位数
-        // 中位数比平均值更好，因为它不受极端值影响
-        // 即使有几个像素采到了背景（距离突然变大），中位数也不会被拉偏
+        // 排序
         horizontalDistances.sort()
-        return horizontalDistances[horizontalDistances.count / 2]
+        
+        // 自适应分位数选择：
+        // 中远距离：中位数（第 50 百分位），对异常值鲁棒，已验证效果良好
+        // 近距离：第 25 百分位，优先选择较近的深度值
+        // 原因：即使经过 margin 收紧和底部偏移，采样区域内仍可能残留
+        //      少量背景像素（深度偏大）。较低分位数能跳过这些污染值，
+        //      更准确地捕获物体表面的真实深度
+        let percentileIndex = isCloseRange
+            // 第 25 百分位
+            ? horizontalDistances.count / 4
+            // 中位数（第 50 百分位）
+            : horizontalDistances.count / 2
+        return horizontalDistances[percentileIndex]
     }
 }
