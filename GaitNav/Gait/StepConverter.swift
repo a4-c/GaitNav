@@ -176,12 +176,6 @@ class StepConverter: ObservableObject {
     //   70% 留出了足够余量，只拦截明显的同步弹跳（bounce）
     private let intervalGuardRatio: Double = 0.7
     
-    // 阈值偏差绝对下限（单位：g）
-    // 防止静止时 EMA 衰减到传感器噪声级别
-    // 智能手机加速度计噪声典型值 ~0.01-0.02g RMS
-    // 下限设为噪声的 ~2 倍，确保静止时不会误触发
-    private let minThresholdDev: Double = 0.03
-    
     // 最小步间隔绝对下限（单位：秒）
     // 基于人类短跑的运动学数据：
     // Tyson Gay 在 2009 年世锦赛 100m 决赛中达到 4.68 步/秒（0.214 秒/步）
@@ -198,6 +192,11 @@ class StepConverter: ObservableObject {
     // EMA 默认值：未做 profiling 时的保守初始值
     // peakDevEma = 0.05g → 对应 TH_HIGH = 1.035g（能检测大多数人的步伐）
     // intervalEma = 0.5s → 对应正常步频 2 步/秒
+    // defaultPeakDevEma 同时也是阈值的绝对下限：
+    //   衰减逻辑确保 peakDevEma 永远不会低于此值
+    //   → TH_HIGH 最低 = 1.0 + 0.05 × 0.7 = 1.035g
+    //   → 远高于静止状态下的传感器噪声（约 0.01-0.02g RMS）
+    //   → 不需要额外的绝对下限参数
     private let defaultPeakDevEma: Double = 0.05
     private let defaultIntervalEma: TimeInterval = 0.5
     
@@ -206,14 +205,15 @@ class StepConverter: ObservableObject {
     // =====================================================================
     
     // 上阈值：信号偏差超过此值 → 进入 peakTracking 状态
+    // 由于衰减逻辑保证 peakDevEma ≥ defaultPeakDevEma (0.05)
+    // TH_HIGH 最低 = 1.0 + 0.05 × 0.7 = 1.035，不需要额外下限
     private var thresholdHigh: Double {
-        gravityBaseline + max(peakDevEma * peakThresholdRatio, minThresholdDev)
+        gravityBaseline + peakDevEma * peakThresholdRatio
     }
     
     // 下阈值：信号偏差低于此值 → 确认波峰，回到 waitingPeak 状态
     private var thresholdLow: Double {
-        gravityBaseline + max(peakDevEma * peakThresholdRatio * hysteresisRatio,
-                              minThresholdDev * hysteresisRatio)
+        gravityBaseline + peakDevEma * peakThresholdRatio * hysteresisRatio
     }
     
     // 动态最小步间隔：从步间隔 EMA 实时计算
@@ -460,6 +460,9 @@ class StepConverter: ObservableObject {
         stopStepDetection()
         // 重置动态估算器的状态（标定结束后会从零开始重新积累）
         dynamicEstimator.reset()
+        // 从 UserDefaults 加载个性化 EMA
+        peakDevEma = gaitProfiler.effectivePeakDevEma ?? defaultPeakDevEma
+        intervalEma = gaitProfiler.effectiveIntervalEma ?? defaultIntervalEma
         // 以标定模式重新启动加速度计
         currentMode = .calibration
         startStepDetection()
@@ -469,6 +472,9 @@ class StepConverter: ObservableObject {
     private func switchToLiveMode() {
         // 先停掉标定模式的加速度计
         stopStepDetection()
+        // 从 UserDefaults 加载个性化 EMA
+        peakDevEma = gaitProfiler.effectivePeakDevEma ?? defaultPeakDevEma
+        intervalEma = gaitProfiler.effectiveIntervalEma ?? defaultIntervalEma
         // 以动态模式重新启动加速度计
         currentMode = .live
         startStepDetection()
@@ -687,3 +693,4 @@ class StepConverter: ObservableObject {
         distanceLogCount = 0
     }
 }
+
