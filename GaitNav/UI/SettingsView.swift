@@ -19,14 +19,14 @@ struct SettingsView: View {
     // 请求打开标定页面的回调
     var onCalibrateRequested: () -> Void
     
+    // 请求打开步态分析页面的回调
+    var onProfileRequested: () -> Void
+    
     // [实验] 当前检测列表，距离日志实验用，实验结束后删除
     var detections: [Detection]
     
     // [实验] CameraManager 引用，性能日志实验用，实验结束后删除
     @ObservedObject var cameraManager: CameraManager
-    
-    // [实验] CSV 复制成功的提示状态，实验结束后删除
-    @State private var showCopiedConfirmation = false
     
     // [实验] 距离日志的提示状态，实验结束后删除
     @State private var showDistanceCopiedConfirmation = false
@@ -93,7 +93,93 @@ struct SettingsView: View {
                         }
                         
                         // =================================================
-                        // 第二组：步长
+                        // 第二组：步态检测（GaitProfiler）
+                        // =================================================
+                        
+                        settingsSection(title: "Gait Detection") {
+                            VStack(spacing: 14) {
+                                // 当前参数展示（阈值 + 步间隔并排）
+                                // 从 EMA 值转换为用户可理解的阈值和步间隔
+                                HStack(spacing: 12) {
+                                    // 波峰阈值：TH_HIGH = 1.0 + peakDevEma × 0.7
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Peak Threshold")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Theme.textDisabled)
+                                        
+                                        HStack(spacing: 3) {
+                                            Text(String(format: "%.3f",
+                                                        1.0 + (stepConverter.gaitProfiler.effectivePeakDevEma ?? 0.05) * 0.7))
+                                                .font(.system(size: 24, weight: .bold, design: .monospaced))
+                                                .foregroundColor(Theme.textPrimary)
+                                            Text("g")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(Theme.textSecondary)
+                                        }
+                                    }
+                                    
+                                    // 分隔竖线
+                                    Rectangle()
+                                        .fill(Theme.divider)
+                                        .frame(width: 1, height: 36)
+                                    
+                                    // 最小步间隔：intervalEma × 0.7
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Min Interval")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(Theme.textDisabled)
+                                        
+                                        HStack(spacing: 3) {
+                                            Text(String(format: "%.2f",
+                                                        (stepConverter.gaitProfiler.effectiveIntervalEma ?? 0.5) * 0.7))
+                                                .font(.system(size: 24, weight: .bold, design: .monospaced))
+                                                .foregroundColor(Theme.textPrimary)
+                                            Text("s")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(Theme.textSecondary)
+                                        }
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    // 来源标签（Profiled / Default）
+                                    gaitSourceBadge
+                                }
+                                .padding(16)
+                                .background(Theme.backgroundElevated)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                                
+                                // 说明文字
+                                Text("These parameters adapt to your gait in real time. Profiling pre-calibrates them for immediate accuracy.")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Theme.textDisabled)
+                                    .lineSpacing(2)
+                                
+                                // 步态分析按钮
+                                Button(action: onProfileRequested) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "waveform.path.ecg")
+                                            .font(.system(size: 14, weight: .medium))
+                                        Text(stepConverter.hasEverProfiled
+                                             ? "Re-profile"
+                                             : "Profile Now")
+                                            .font(.system(size: 15, weight: .semibold))
+                                    }
+                                    .foregroundColor(Theme.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .background(Theme.accent.opacity(0.12))
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                                            .stroke(Theme.accent.opacity(0.25), lineWidth: 1)
+                                    )
+                                }
+                            }
+                        }
+                        
+                        // =================================================
+                        // 第三组：步长
                         // =================================================
                         
                         settingsSection(title: "Step Length") {
@@ -190,116 +276,6 @@ struct SettingsView: View {
                                 aboutRow(title: "Depth Sensor", value: "LiDAR")
                                 Divider().background(Theme.divider)
                                 aboutRow(title: "Positioning", value: "ARKit 6DoF")
-                            }
-                        }
-                        
-                        // =================================================
-                        // [实验] 波峰日志调试区（实验结束后删除整个 section）
-                        // =================================================
-                        
-                        settingsSection(title: "Peak Logging (Debug)") {
-                            VStack(spacing: 14) {
-                                // 状态指示：录制中 / 空闲 + 已记录波峰数
-                                HStack {
-                                    Circle()
-                                        .fill(stepConverter.isLoggingPeaks ? Theme.danger : Theme.textDisabled)
-                                        .frame(width: 8, height: 8)
-                                    Text(stepConverter.isLoggingPeaks ? "Recording..." : "Idle")
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundColor(stepConverter.isLoggingPeaks ? Theme.danger : Theme.textSecondary)
-                                    Spacer()
-                                    Text("\(stepConverter.peakLogCount) peaks")
-                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                        .foregroundColor(Theme.textSecondary)
-                                }
-                                
-                                // 复制成功提示
-                                if showCopiedConfirmation {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 12))
-                                        Text("CSV copied to clipboard")
-                                            .font(.system(size: 12, weight: .medium))
-                                    }
-                                    .foregroundColor(Theme.safe)
-                                    .transition(.opacity)
-                                }
-                                
-                                // 三个操作按钮：Start / Stop & Copy / Clear
-                                HStack(spacing: 10) {
-                                    // Start 按钮
-                                    Button(action: {
-                                        stepConverter.startPeakLogging()
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "record.circle")
-                                                .font(.system(size: 12, weight: .bold))
-                                            Text("Start")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        .foregroundColor(stepConverter.isLoggingPeaks ? Theme.textDisabled : Theme.safe)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
-                                        .background(stepConverter.isLoggingPeaks ? Theme.backgroundElevated : Theme.safe.opacity(0.12))
-                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(stepConverter.isLoggingPeaks ? Theme.border : Theme.safe.opacity(0.25), lineWidth: 1)
-                                        )
-                                    }
-                                    .disabled(stepConverter.isLoggingPeaks)
-                                    
-                                    // Stop & Copy 按钮
-                                    Button(action: {
-                                        let csv = stepConverter.stopPeakLoggingAndExportCSV()
-                                        UIPasteboard.general.string = csv
-                                        // 显示复制成功提示，2 秒后自动消失
-                                        withAnimation { showCopiedConfirmation = true }
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                            withAnimation { showCopiedConfirmation = false }
-                                        }
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "stop.circle")
-                                                .font(.system(size: 12, weight: .bold))
-                                            Text("Stop & Copy")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        .foregroundColor(!stepConverter.isLoggingPeaks ? Theme.textDisabled : Theme.warning)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
-                                        .background(!stepConverter.isLoggingPeaks ? Theme.backgroundElevated : Theme.warning.opacity(0.12))
-                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(!stepConverter.isLoggingPeaks ? Theme.border : Theme.warning.opacity(0.25), lineWidth: 1)
-                                        )
-                                    }
-                                    .disabled(!stepConverter.isLoggingPeaks)
-                                    
-                                    // Clear 按钮
-                                    Button(action: {
-                                        stepConverter.clearPeakLog()
-                                        showCopiedConfirmation = false
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "trash")
-                                                .font(.system(size: 12, weight: .bold))
-                                            Text("Clear")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        .foregroundColor(stepConverter.peakLogCount == 0 ? Theme.textDisabled : Theme.textSecondary)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
-                                        .background(Theme.backgroundElevated)
-                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(Theme.border, lineWidth: 1)
-                                        )
-                                    }
-                                    .disabled(stepConverter.peakLogCount == 0)
-                                }
                             }
                         }
                         
@@ -675,6 +651,30 @@ struct SettingsView: View {
             case .dynamic:      return ("Dynamic", Theme.safe)
             case .calibrated:   return ("Calibrated", Theme.accent)
             case .defaultValue: return ("Default", Theme.textDisabled)
+            }
+        }()
+        
+        return Text(text)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundColor(color)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+            .textCase(.uppercase)
+            .tracking(0.5)
+    }
+    
+    // =====================================================================
+    // 步态检测来源徽章（Profiled / Default）
+    // =====================================================================
+    
+    private var gaitSourceBadge: some View {
+        let (text, color): (String, Color) = {
+            if stepConverter.hasEverProfiled {
+                return ("Profiled", Theme.accent)
+            } else {
+                return ("Default", Theme.textDisabled)
             }
         }()
         

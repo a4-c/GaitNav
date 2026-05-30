@@ -6,6 +6,7 @@ struct ContentView: View {
     @StateObject private var stepConverter = StepConverter()
     
     @State private var showCalibration = false
+    @State private var showGaitProfiler = false
     @State private var showSettings = false
     @State private var feedbackDistanceMode = FeedbackDistanceMode.saved
     @State private var isCameraReady = false
@@ -79,7 +80,7 @@ struct ContentView: View {
             feedbackManager = fm
             
             stepConverter.onStepDetected = { [self] in
-                guard !showCalibration, !showSettings, isFeedbackActive else { return }
+                guard !showCalibration, !showGaitProfiler, !showSettings, isFeedbackActive else { return }
                 fm.handleStep(with: camera.detections)
             }
         }
@@ -97,7 +98,7 @@ struct ContentView: View {
             }
         }
         .onReceive(camera.$detections) { detections in
-            guard isFeedbackActive, !showCalibration, !showSettings else { return }
+            guard isFeedbackActive, !showCalibration, !showGaitProfiler, !showSettings else { return }
             feedbackManager?.update(with: detections)
         }
         .onChange(of: feedbackDistanceMode) { oldMode, newMode in
@@ -110,6 +111,13 @@ struct ContentView: View {
                     speech.stop()
                 }
         }
+        // 步态分析页面（学习个性化波峰阈值）
+        .sheet(isPresented: $showGaitProfiler) {
+            GaitProfilerView(gaitProfiler: stepConverter.gaitProfiler)
+                .onAppear {
+                    speech.stop()
+                }
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView(
                 feedbackDistanceMode: $feedbackDistanceMode,
@@ -118,6 +126,13 @@ struct ContentView: View {
                     showSettings = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                         showCalibration = true
+                    }
+                },
+                // 步态分析：关闭设置页后打开 GaitProfilerView
+                onProfileRequested: {
+                    showSettings = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        showGaitProfiler = true
                     }
                 },
                 detections: camera.detections,  // [实验] 距离日志实验用，实验结束后删除
