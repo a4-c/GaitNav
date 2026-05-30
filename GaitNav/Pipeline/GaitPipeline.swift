@@ -2,7 +2,7 @@ import CoreMotion
 import ARKit
 import Combine
 
-// 步长转换器：步伐检测 → 步长标定和动态步长估算
+// 步态流水线：步伐检测 → 步长标定和动态步长估算
 //
 // 职责：
 //   1. 拥有 CMMotionManager，运行自适应步伐检测算法（共享基础设施）
@@ -20,7 +20,7 @@ import Combine
 //
 // 三级优先级：
 //   动态步长（用户正在走，实时测量）> 标定步长（用户静止，但之前标定过）> 默认步长（从未标定，兜底值）
-class StepConverter: ObservableObject {
+class GaitPipeline: ObservableObject {
     
     // =====================================================================
     // 子模块
@@ -35,7 +35,7 @@ class StepConverter: ObservableObject {
     // CalibrationView 需要观察它，所以是 @Published
     // 当 Calibrator 内部的 @Published 属性变化时
     // objectWillChange 会沿着 @Published 链条冒泡上来
-    // 确保 ContentView 持有的 StepConverter 也能感知到变化
+    // 确保 ContentView 持有的 GaitPipeline 也能感知到变化
     @Published var calibrator = Calibrator()
     
     // 动态步长估算器：实时逐步计算步长
@@ -230,7 +230,7 @@ class StepConverter: ObservableObject {
     
     // 当前的步伐分发模式
     //   .profiling：确认的步伐发给 GaitProfiler（EMA 从初始值开始收敛）
-    //   .live：步伐事件发给 DynamicStepEstimator + FeedbackManager
+    //   .live：步伐事件发给 DynamicStepEstimator + FeedbackPipeline
     //   .calibration：步伐事件发给 Calibrator
     private enum Mode {
         case profiling
@@ -257,7 +257,7 @@ class StepConverter: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     // 步伐事件回调：每检测到一步就触发
-    // FeedbackManager 通过这个回调来同步倒数播报和实际步伐
+    // FeedbackPipeline 通过这个回调来同步倒数播报和实际步伐
     // 只在 .live 模式下触发（标定模式下步伐由 Calibrator 处理）
     var onStepDetected: (() -> Void)?
     
@@ -307,7 +307,7 @@ class StepConverter: ObservableObject {
         
         // 订阅 Calibrator 的 objectWillChange
         // 这样当 Calibrator 内部的 @Published 属性变化时
-        // StepConverter 自己的 objectWillChange 也会触发
+        // GaitPipeline 自己的 objectWillChange 也会触发
         // 确保 SwiftUI 界面能感知到 Calibrator 的变化
         calibrator.objectWillChange
             .sink { [weak self] _ in
@@ -332,7 +332,7 @@ class StepConverter: ObservableObject {
     
     // 每次访问时实时计算，不存储值
     // 外部模块（比如 DetectionOverlay）不需要关心步长是怎么来的
-    // 只需要调用 stepConverter.effectiveStepLength，总能拿到一个合理的值
+    // 只需要调用 gaitPipeline.effectiveStepLength，总能拿到一个合理的值
     //
     // 三级优先级：
     //   1. 动态步长
@@ -416,7 +416,7 @@ class StepConverter: ObservableObject {
     }
     
     // 使用稳定的标定/默认步长换算距离。
-    // FeedbackManager 在倒数前使用它，避免剩余步数反向增加造成混乱。
+    // FeedbackPipeline 在倒数前使用它，避免剩余步数反向增加造成混乱。
     func distanceToStableSteps(_ distance: Float) -> Int {
         return Int(ceil(distance / stableStepLength))
     }
@@ -613,8 +613,8 @@ class StepConverter: ObservableObject {
             // 动态步长更新后，通知 SwiftUI 刷新界面
             // 因为 effectiveStepLength 可能变了
             objectWillChange.send()
-            // 通知 FeedbackManager：用户走了一步
-            // FeedbackManager 会据此决定是否播报倒数数字
+            // 通知 FeedbackPipeline：用户走了一步
+            // FeedbackPipeline 会据此决定是否播报倒数数字
             onStepDetected?()
         }
     }
@@ -693,4 +693,3 @@ class StepConverter: ObservableObject {
         distanceLogCount = 0
     }
 }
-

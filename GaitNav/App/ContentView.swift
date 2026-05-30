@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     
     @StateObject private var perceptionPipeline = PerceptionPipeline()
-    @StateObject private var stepConverter = StepConverter()
+    @StateObject private var gaitPipeline = GaitPipeline()
     
     @State private var showCalibration = false
     @State private var showGaitProfiler = false
@@ -15,7 +15,7 @@ struct ContentView: View {
     @State private var isPaused = false
     
     private let speech = SpeechManager()
-    @State private var feedbackManager: FeedbackManager? = nil
+    @State private var feedbackPipeline: FeedbackPipeline? = nil
     
     var body: some View {
         ZStack {
@@ -31,7 +31,7 @@ struct ContentView: View {
             // 中层：检测框叠加层
             // =============================================================
             
-            DetectionOverlay(detections: perceptionPipeline.detections, stepConverter: stepConverter)
+            DetectionOverlay(detections: perceptionPipeline.detections, gaitPipeline: gaitPipeline)
                 .ignoresSafeArea()
             
             // =============================================================
@@ -73,19 +73,19 @@ struct ContentView: View {
         .onAppear {
             perceptionPipeline.start()
             
-            stepConverter.setARSession(perceptionPipeline.session)
-            stepConverter.start()
+            gaitPipeline.setARSession(perceptionPipeline.session)
+            gaitPipeline.start()
             
-            let fm = FeedbackManager(speech: speech, stepConverter: stepConverter, distanceMode: feedbackDistanceMode)
-            feedbackManager = fm
+            let pipeline = FeedbackPipeline(speech: speech, gaitPipeline: gaitPipeline, distanceMode: feedbackDistanceMode)
+            feedbackPipeline = pipeline
             
-            stepConverter.onStepDetected = { [self] in
+            gaitPipeline.onStepDetected = { [self] in
                 guard !showCalibration, !showGaitProfiler, !showSettings, isFeedbackActive else { return }
-                fm.handleStep(with: perceptionPipeline.detections)
+                pipeline.handleStep(with: perceptionPipeline.detections)
             }
         }
         .onDisappear {
-            stepConverter.stop()
+            gaitPipeline.stop()
             speech.stop()
         }
         .onReceive(perceptionPipeline.$fps) { fps in
@@ -99,21 +99,21 @@ struct ContentView: View {
         }
         .onReceive(perceptionPipeline.$detections) { detections in
             guard isFeedbackActive, !showCalibration, !showGaitProfiler, !showSettings else { return }
-            feedbackManager?.update(with: detections)
+            feedbackPipeline?.update(with: detections)
         }
         .onChange(of: feedbackDistanceMode) { oldMode, newMode in
             newMode.save()
-            feedbackManager?.distanceMode = newMode
+            feedbackPipeline?.distanceMode = newMode
         }
         .sheet(isPresented: $showCalibration) {
-            CalibrationView(calibrator: stepConverter.calibrator)
+            CalibrationView(calibrator: gaitPipeline.calibrator)
                 .onAppear {
                     speech.stop()
                 }
         }
         // 步态分析页面（学习个性化波峰阈值）
         .sheet(isPresented: $showGaitProfiler) {
-            GaitProfilerView(gaitProfiler: stepConverter.gaitProfiler)
+            GaitProfilerView(gaitProfiler: gaitPipeline.gaitProfiler)
                 .onAppear {
                     speech.stop()
                 }
@@ -121,7 +121,7 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(
                 feedbackDistanceMode: $feedbackDistanceMode,
-                stepConverter: stepConverter,
+                gaitPipeline: gaitPipeline,
                 onCalibrateRequested: {
                     showSettings = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
@@ -295,7 +295,7 @@ struct ContentView: View {
             // 步长指示器（仅展示，通过设置页标定）
             hudCapsule {
                 HStack(spacing: 6) {
-                    if stepConverter.isDynamicActive {
+                    if gaitPipeline.isDynamicActive {
                         Circle()
                             .fill(Theme.safe)
                             .frame(width: 8, height: 8)
@@ -386,7 +386,7 @@ struct ContentView: View {
     // =====================================================================
     
     private var stepLengthLabel: String {
-        let value = String(format: "%.2f", stepConverter.effectiveStepLength)
+        let value = String(format: "%.2f", gaitPipeline.effectiveStepLength)
         return "\(value) m/step"
     }
 }

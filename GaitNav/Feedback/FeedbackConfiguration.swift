@@ -69,7 +69,7 @@ struct FeedbackConfiguration {
     let minAnnouncementInterval: TimeInterval = 1.5
     
     // 倒数模式下的最短间隔。
-    // 步伐确认已经由 StepConverter 防抖，这里只防同一事件链里的重复播报。
+    // 步伐确认已经由 GaitPipeline 防抖，这里只防同一事件链里的重复播报。
     let countdownMinInterval: TimeInterval = 0.25
     
     // 如果加速度计漏检了一步，但视觉/LiDAR 步数已经稳定下降，

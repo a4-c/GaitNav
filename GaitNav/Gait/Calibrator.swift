@@ -5,7 +5,7 @@ import Combine
 //
 // 流程：
 //   用户点 Start → 记录手机当前位置（ARKit）+ 开始数步数
-//   用户直线走路 → 每走一步，步数 +1（步伐检测由 StepConverter 负责）
+//   用户直线走路 → 每走一步，步数 +1（步伐检测由 GaitPipeline 负责）
 //   用户点 Stop → 记录手机终点位置 → 算出走了多远
 //   步长 = 总距离 / 总步数 → 存入本地存储
 //
@@ -37,15 +37,15 @@ class Calibrator: ObservableObject {
     // UserDefaults 的 key
     private let stepLengthKey = "calibratedStepLength"
     
-    // 标定开始 / 结束时通知 StepConverter
-    // StepConverter 需要知道标定状态，以便切换加速度计的模式
-    //   onCalibrationStarted：标定开始 → StepConverter 暂停动态检测，切换到标定模式
-    //   onCalibrationStopped：标定结束 → StepConverter 恢复动态检测
+    // 标定开始 / 结束时通知 GaitPipeline
+    // GaitPipeline 需要知道标定状态，以便切换加速度计的模式
+    //   onCalibrationStarted：标定开始 → GaitPipeline 暂停动态检测，切换到标定模式
+    //   onCalibrationStopped：标定结束 → GaitPipeline 恢复动态检测
     var onCalibrationStarted: (() -> Void)?
     var onCalibrationStopped: (() -> Void)?
     
     // 当前可用的标定步长
-    // 没有返回 nil，由 StepConverter 决定用默认值
+    // 没有返回 nil，由 GaitPipeline 决定用默认值
     var effectiveStepLength: Float? {
         let saved = UserDefaults.standard.float(forKey: stepLengthKey)
         return saved > 0 ? saved : nil
@@ -75,7 +75,7 @@ class Calibrator: ObservableObject {
         }
     }
     
-    // StepConverter 在检测到一步时调用
+    // GaitPipeline 在检测到一步时调用
     // 只在 isCalibrating == true 时有意义，否则忽略
     func handleStep() {
         guard isCalibrating else { return }
@@ -126,10 +126,10 @@ class Calibrator: ObservableObject {
         statusMessage = "Walk now..."
         
         // =============================================================
-        // 第三步：通知 StepConverter 切换到标定模式
+        // 第三步：通知 GaitPipeline 切换到标定模式
         // =============================================================
         
-        // StepConverter 收到后会：
+        // GaitPipeline 收到后会：
         //   暂停动态检测 → 重置波峰检测状态 → 开始把步伐事件分发给 Calibrator
         onCalibrationStarted?()
     }
@@ -148,7 +148,7 @@ class Calibrator: ObservableObject {
         // 如果 startPosition 是 nil，说明 startCalibration 失败了或者没被调用
         guard let startPos = startPosition else {
             statusMessage = "Error: no start position."
-            // 标定失败，通知 StepConverter 恢复动态检测
+            // 标定失败，通知 GaitPipeline 恢复动态检测
             onCalibrationStopped?()
             return
         }
@@ -243,7 +243,7 @@ class Calibrator: ObservableObject {
         startPosition = nil
         
         // =============================================================
-        // 第五步：通知 StepConverter 恢复动态检测
+        // 第五步：通知 GaitPipeline 恢复动态检测
         // =============================================================
         
         onCalibrationStopped?()

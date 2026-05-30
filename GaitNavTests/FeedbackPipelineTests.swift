@@ -1,7 +1,7 @@
 import XCTest
 @testable import GaitNav
 
-// FeedbackManager 单元测试
+// FeedbackPipeline 单元测试
 // 测试对象：焦点获取→首报、侧边过滤、突然出现警告、倒数逻辑、米数模式阈值
 //
 // 测试策略：
@@ -40,11 +40,11 @@ final class MockSpeechManager: SpeechManager {
     }
 }
 
-final class FeedbackManagerTests: XCTestCase {
+final class FeedbackPipelineTests: XCTestCase {
     
     private var mockSpeech: MockSpeechManager!
-    private var stepConverter: StepConverter!
-    private var feedbackManager: FeedbackManager!
+    private var gaitPipeline: GaitPipeline!
+    private var feedbackPipeline: FeedbackPipeline!
     
     override func setUp() {
         super.setUp()
@@ -52,8 +52,8 @@ final class FeedbackManagerTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "calibratedStepLength")
         
         mockSpeech = MockSpeechManager()
-        stepConverter = StepConverter()
-        feedbackManager = FeedbackManager(speech: mockSpeech, stepConverter: stepConverter, distanceMode: .steps)
+        gaitPipeline = GaitPipeline()
+        feedbackPipeline = FeedbackPipeline(speech: mockSpeech, gaitPipeline: gaitPipeline, distanceMode: .steps)
     }
     
     override func tearDown() {
@@ -70,7 +70,7 @@ final class FeedbackManagerTests: XCTestCase {
             distance: 3.0   // 3.0m / 0.65m ≈ 5 步
         )
         
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         
         XCTAssertFalse(mockSpeech.allTexts.isEmpty, "首次看到物体应触发播报")
         if let text = mockSpeech.allTexts.first {
@@ -85,7 +85,7 @@ final class FeedbackManagerTests: XCTestCase {
     // 物体在左侧（midX < 0.25）→ 11 o'clock
     func testDirection_left() {
         let detection = makeDetection(midX: 0.1, distance: 2.0)
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         
         if let text = mockSpeech.allTexts.first {
             XCTAssertTrue(text.contains("11 o'clock"), "左侧物体应报 11 o'clock，实际: \(text)")
@@ -95,7 +95,7 @@ final class FeedbackManagerTests: XCTestCase {
     // 物体在中央（0.25 ≤ midX < 0.75）→ 12 o'clock
     func testDirection_center() {
         let detection = makeDetection(midX: 0.5, distance: 2.0)
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         
         if let text = mockSpeech.allTexts.first {
             XCTAssertTrue(text.contains("12 o'clock"), "中央物体应报 12 o'clock，实际: \(text)")
@@ -105,7 +105,7 @@ final class FeedbackManagerTests: XCTestCase {
     // 物体在右侧（midX ≥ 0.75）→ 1 o'clock
     func testDirection_right() {
         let detection = makeDetection(midX: 0.9, distance: 2.0)
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         
         if let text = mockSpeech.allTexts.first {
             XCTAssertTrue(text.contains("1 o'clock"), "右侧物体应报 1 o'clock，实际: \(text)")
@@ -119,7 +119,7 @@ final class FeedbackManagerTests: XCTestCase {
         // midX = 0.1 → 左侧边（< 0.35）
         // distance = 5.0m → 约 8 步（> sideIgnoreSteps=5）
         let detection = makeDetection(midX: 0.1, distance: 5.0)
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         
         XCTAssertTrue(mockSpeech.allTexts.isEmpty, "侧边远处物体不应触发播报")
     }
@@ -129,7 +129,7 @@ final class FeedbackManagerTests: XCTestCase {
         // midX = 0.1 → 左侧边
         // distance = 1.5m → 约 3 步（≤ 3 步的侧边物体仍会被关注）
         let detection = makeDetection(midX: 0.1, distance: 1.5)
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         
         XCTAssertFalse(mockSpeech.allTexts.isEmpty, "近距离侧边物体应触发播报")
     }
@@ -139,7 +139,7 @@ final class FeedbackManagerTests: XCTestCase {
     // 没有距离信息的物体应被忽略
     func testNoDistance_ignored() {
         let detection = makeDetection(midX: 0.5, distance: nil)
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         
         XCTAssertTrue(mockSpeech.allTexts.isEmpty, "无距离信息的物体不应触发播报")
     }
@@ -151,7 +151,7 @@ final class FeedbackManagerTests: XCTestCase {
         let close = makeDetection(midX: 0.5, distance: 2.0, label: "chair")
         let far = makeDetection(midX: 0.5, distance: 6.0, label: "table")
         
-        feedbackManager.update(with: [close, far])
+        feedbackPipeline.update(with: [close, far])
         
         XCTAssertEqual(mockSpeech.allTexts.count, 1, "应只播报一个物体")
         if let text = mockSpeech.allTexts.first {
@@ -165,12 +165,12 @@ final class FeedbackManagerTests: XCTestCase {
     func testSuddenAppearance_urgentAlert() {
         // 第一帧：有一个远处物体
         let far = makeDetection(midX: 0.5, distance: 6.0, label: "table")
-        feedbackManager.update(with: [far])
+        feedbackPipeline.update(with: [far])
         mockSpeech.reset()
         
         // 第二帧：突然出现近距离物体
         let sudden = makeDetection(midX: 0.5, distance: 0.5, label: "person")
-        feedbackManager.update(with: [far, sudden])
+        feedbackPipeline.update(with: [far, sudden])
         
         XCTAssertFalse(mockSpeech.allTexts.isEmpty, "突然出现的近距离物体应触发播报")
         if let text = mockSpeech.allTexts.first {
@@ -184,11 +184,11 @@ final class FeedbackManagerTests: XCTestCase {
     func testDebounce_noRepeatWithinInterval() {
         let detection = makeDetection(midX: 0.5, distance: 4.0, label: "chair")
         
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         let firstCount = mockSpeech.allTexts.count
         
         // 立刻再次 update（同一物体，距离没有跨过阈值）
-        feedbackManager.update(with: [detection])
+        feedbackPipeline.update(with: [detection])
         let secondCount = mockSpeech.allTexts.count
         
         XCTAssertEqual(firstCount, secondCount,
@@ -200,22 +200,22 @@ final class FeedbackManagerTests: XCTestCase {
     // 物体消失 → 应释放焦点，新物体应能被播报
     func testFocusRelease_afterObjectDisappears() {
         let obj1 = makeDetection(midX: 0.5, distance: 3.0, label: "chair")
-        feedbackManager.update(with: [obj1])
+        feedbackPipeline.update(with: [obj1])
         
         // 等待足够时间让防抖冷却（minAnnouncementInterval = 1.5s）
         // 使用 Thread.sleep 而非 expectation + DispatchQueue.main.asyncAfter，
         // 因为 waitForExpectations 会阻塞主线程，导致 asyncAfter 的 block 永远无法执行（死锁）。
-        // FeedbackManager 的防抖基于 Date() 比较，只需要实际时间流逝即可。
+        // FeedbackPipeline 的防抖基于 Date() 比较，只需要实际时间流逝即可。
         Thread.sleep(forTimeInterval: 1.6)
         
         mockSpeech.reset()
         
         // 物体消失
-        feedbackManager.update(with: [])
+        feedbackPipeline.update(with: [])
         
         // 新物体出现
         let obj2 = makeDetection(midX: 0.5, distance: 2.0, label: "person")
-        feedbackManager.update(with: [obj2])
+        feedbackPipeline.update(with: [obj2])
         
         XCTAssertFalse(mockSpeech.allTexts.isEmpty, "旧物体消失后新物体应能被播报")
         if let text = mockSpeech.allTexts.first {

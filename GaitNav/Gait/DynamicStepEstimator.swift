@@ -48,7 +48,7 @@ class DynamicStepEstimator {
         Date().timeIntervalSince(lastUpdateTime) < timeout
     }
     
-    // StepConverter 在检测到一步时调用这个方法
+    // GaitPipeline 在检测到一步时调用这个方法
     // 记录这一步的 ARKit 位置，和上一步的位置算距离 = 这一步的步长
     func handleStep() {
         

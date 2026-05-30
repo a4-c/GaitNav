@@ -10,7 +10,7 @@ import SwiftUI
 struct DetectionOverlay: View {
     
     let detections: [Detection]
-    let stepConverter: StepConverter
+    let gaitPipeline: GaitPipeline
     
     var body: some View {
         GeometryReader { geometry in
@@ -85,7 +85,7 @@ struct DetectionOverlay: View {
                     .foregroundColor(color)
                 
                 // 步数
-                let steps = stepConverter.distanceToSteps(d)
+                let steps = gaitPipeline.distanceToSteps(d)
                 Text("(\(steps) steps)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Theme.textSecondary)

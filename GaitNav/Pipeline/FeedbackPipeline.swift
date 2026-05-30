@@ -1,7 +1,7 @@
 import Foundation
 import ARKit
 
-// 语音反馈管理器：决定"什么时候说什么"
+// 反馈流水线：决定"什么时候说什么"
 //
 // 设计原则（来自倒车雷达模型）：
 //   1. 漏斗原则：一次只关注一个障碍物（最危险的那个）
@@ -11,7 +11,7 @@ import ARKit
 //      近距离（≤ 5 步）→ 步伐同步倒数，用户每走一步说一个数字
 //      1 步 → 最后一句短促行动提示（"Stop"）
 //   3. 倒数与步伐同步：
-//      倒数模式下的数字播报由 StepConverter 的步伐检测事件驱动
+//      倒数模式下的数字播报由 GaitPipeline 的步伐检测事件驱动
 //      用户走一步 → 加速度计检测到 → handleStep() 被调用 → 读取 LiDAR 最新距离
 //      每个确认步伐推进一个数字；如果动态步长偏差变大，就先播报修正值。
 //      这样倒数节奏和用户的步伐完全同步，而不是按帧率随机触发。
@@ -56,7 +56,7 @@ import ARKit
 //   "Stop"                           ← 距离 < 0.5m
 //
 // 全程 5 句话，没有倒数，没有步伐同步。和传统导航系统的行为一致。
-class FeedbackManager {
+class FeedbackPipeline {
     
     // 语音引擎：负责实际的 TTS 播报
     private let speech: SpeechManager
@@ -68,16 +68,16 @@ class FeedbackManager {
     private let countdownController = CountdownController()
     private var focusState = FeedbackFocusState()
     
-    // 步长转换器：把距离（米）转成步数
+    // 步态流水线：把距离（米）转成步数
     // weak 防止循环引用
-    private weak var stepConverter: StepConverter?
+    private weak var gaitPipeline: GaitPipeline?
     
     // 反馈距离单位：步数 or 米数
     var distanceMode: FeedbackDistanceMode
     
-    init(speech: SpeechManager, stepConverter: StepConverter, distanceMode: FeedbackDistanceMode = .steps) {
+    init(speech: SpeechManager, gaitPipeline: GaitPipeline, distanceMode: FeedbackDistanceMode = .steps) {
         self.speech = speech
-        self.stepConverter = stepConverter
+        self.gaitPipeline = gaitPipeline
         self.distanceMode = distanceMode
     }
     
@@ -91,7 +91,7 @@ class FeedbackManager {
     //   5. 更新聚焦物体的状态：方位变化 → 播报；步数跨过阈值 → 播报
     func update(with detections: [Detection], isConfirmedStepUpdate: Bool = false) {
         
-        guard let stepConverter = stepConverter else { return }
+        guard let gaitPipeline = gaitPipeline else { return }
         
         let now = Date()
         let currentIDs = Set(detections.map { $0.id })
@@ -103,7 +103,7 @@ class FeedbackManager {
         let candidates = candidateBuilder.buildCandidates(
             from: detections,
             previousIDs: focusState.previousIDs,
-            stepConverter: stepConverter,
+            gaitPipeline: gaitPipeline,
             distanceMode: distanceMode,
             isCountdownActive: isCountdownActive,
             configuration: configuration,
@@ -278,7 +278,7 @@ class FeedbackManager {
     
     // 步伐同步倒数
     //
-    // 由 StepConverter 在检测到一步时调用（通过 onStepDetected 回调）
+    // 由 GaitPipeline 在检测到一步时调用（通过 onStepDetected 回调）
     //
     // 只在倒数模式下推进数字：
     //   读取 focusState.focusedCurrentSteps（update() 刷新的 LiDAR 最新距离）

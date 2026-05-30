@@ -9,12 +9,12 @@ import Combine
 //   GaitProfiler 通过让用户走一段路，让 EMA（指数移动平均）自然收敛
 //   到适合这个人的步态特征参数
 //
-// 与 StepConverter 的关系：
-//   StepConverter 持有自适应状态机（双阈值迟滞 + EMA 动态阈值）
+// 与 GaitPipeline 的关系：
+//   GaitPipeline 持有自适应状态机（双阈值迟滞 + EMA 动态阈值）
 //   GaitProfiler 只是一个控制器：
-//     1. 告诉 StepConverter 切换到 profiling 模式（EMA 重置为保守初始值）
-//     2. 记录 profiling 期间确认的步数（由 StepConverter 的状态机分发）
-//     3. profiling 结束时，接收 StepConverter 当前已收敛的 EMA 值并存入 UserDefaults
+//     1. 告诉 GaitPipeline 切换到 profiling 模式（EMA 重置为保守初始值）
+//     2. 记录 profiling 期间确认的步数（由 GaitPipeline 的状态机分发）
+//     3. profiling 结束时，接收 GaitPipeline 当前已收敛的 EMA 值并存入 UserDefaults
 //   GaitProfiler 自身不做任何信号处理或波峰检测
 //
 // 为什么必须在 Calibrator 之前运行：
@@ -30,7 +30,7 @@ class GaitProfiler: ObservableObject {
     // 是否正在进行步态分析
     @Published var isProfiling = false
     
-    // profiling 期间确认的步数（由 StepConverter 状态机分发）
+    // profiling 期间确认的步数（由 GaitPipeline 状态机分发）
     @Published var profilingSteps = 0
     
     // 分析已持续的秒数（驱动 UI 上的计时器和进度环）
@@ -61,14 +61,14 @@ class GaitProfiler: ObservableObject {
     private let intervalEmaKey = "profiledIntervalEma"
     
     // 当前可用的波峰偏差 EMA
-    // 没有返回 nil，由 StepConverter 决定用默认值
+    // 没有返回 nil，由 GaitPipeline 决定用默认值
     var effectivePeakDevEma: Double? {
         let saved = UserDefaults.standard.double(forKey: peakDevEmaKey)
         return saved > 0 ? saved : nil
     }
     
     // 当前可用的步间隔 EMA
-    // 没有返回 nil，由 StepConverter 决定用默认值
+    // 没有返回 nil，由 GaitPipeline 决定用默认值
     var effectiveIntervalEma: TimeInterval? {
         let saved = UserDefaults.standard.double(forKey: intervalEmaKey)
         return saved > 0 ? saved : nil
@@ -84,9 +84,9 @@ class GaitProfiler: ObservableObject {
     // 回调
     // =====================================================================
     
-    // 分析开始 / 结束时通知 StepConverter
-    //   onProfilingStarted：StepConverter 切换到 .profiling 模式（重置 EMA 为初始值）
-    //   onProfilingStopped：StepConverter 将当前已收敛的 EMA 传给 saveProfile()
+    // 分析开始 / 结束时通知 GaitPipeline
+    //   onProfilingStarted：GaitPipeline 切换到 .profiling 模式（重置 EMA 为初始值）
+    //   onProfilingStopped：GaitPipeline 将当前已收敛的 EMA 传给 saveProfile()
     var onProfilingStarted: (() -> Void)?
     var onProfilingStopped: (() -> Void)?
     
@@ -114,9 +114,9 @@ class GaitProfiler: ObservableObject {
     // 步伐事件
     // =====================================================================
     
-    // StepConverter 在 .profiling 模式下确认一步时调用
+    // GaitPipeline 在 .profiling 模式下确认一步时调用
     // GaitProfiler 只需要计数，不做任何信号处理
-    // （信号处理由 StepConverter 的自适应状态机完成）
+    // （信号处理由 GaitPipeline 的自适应状态机完成）
     func handleStep() {
         guard isProfiling else { return }
         profilingSteps += 1
@@ -142,8 +142,8 @@ class GaitProfiler: ObservableObject {
             self.profilingSeconds += 1
         }
         
-        // 通知 StepConverter 切换到 profiling 模式
-        // StepConverter 会重置 EMA 为初始值，让自适应算法从零开始收敛
+        // 通知 GaitPipeline 切换到 profiling 模式
+        // GaitPipeline 会重置 EMA 为初始值，让自适应算法从零开始收敛
         onProfilingStarted?()
     }
     
@@ -157,8 +157,8 @@ class GaitProfiler: ObservableObject {
         timer?.invalidate()
         timer = nil
         
-        // 通知 StepConverter profiling 结束
-        // StepConverter 会调用 saveProfile() 传入当前已收敛的 EMA 值
+        // 通知 GaitPipeline profiling 结束
+        // GaitPipeline 会调用 saveProfile() 传入当前已收敛的 EMA 值
         onProfilingStopped?()
     }
     
@@ -166,8 +166,8 @@ class GaitProfiler: ObservableObject {
     // 保存分析结果
     // =====================================================================
     
-    // 由 StepConverter 在 profiling 结束时调用
-    // 接收 StepConverter 自适应状态机当前已收敛的 EMA 值
+    // 由 GaitPipeline 在 profiling 结束时调用
+    // 接收 GaitPipeline 自适应状态机当前已收敛的 EMA 值
     func saveProfile(peakDevEma: Double, intervalEma: TimeInterval) {
         
         // 最少需要确认 8 步，确保 EMA 已充分收敛

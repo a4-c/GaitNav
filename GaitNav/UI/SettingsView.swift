@@ -13,7 +13,7 @@ import UIKit
 struct SettingsView: View {
     
     @Binding var feedbackDistanceMode: FeedbackDistanceMode
-    @ObservedObject var stepConverter: StepConverter
+    @ObservedObject var gaitPipeline: GaitPipeline
     @Environment(\.dismiss) var dismiss
     
     // 请求打开标定页面的回调
@@ -109,7 +109,7 @@ struct SettingsView: View {
                                         
                                         HStack(spacing: 3) {
                                             Text(String(format: "%.3f",
-                                                        1.0 + (stepConverter.gaitProfiler.effectivePeakDevEma ?? 0.05) * 0.7))
+                                                        1.0 + (gaitPipeline.gaitProfiler.effectivePeakDevEma ?? 0.05) * 0.7))
                                                 .font(.system(size: 24, weight: .bold, design: .monospaced))
                                                 .foregroundColor(Theme.textPrimary)
                                             Text("g")
@@ -131,7 +131,7 @@ struct SettingsView: View {
                                         
                                         HStack(spacing: 3) {
                                             Text(String(format: "%.2f",
-                                                        (stepConverter.gaitProfiler.effectiveIntervalEma ?? 0.5) * 0.7))
+                                                        (gaitPipeline.gaitProfiler.effectiveIntervalEma ?? 0.5) * 0.7))
                                                 .font(.system(size: 24, weight: .bold, design: .monospaced))
                                                 .foregroundColor(Theme.textPrimary)
                                             Text("s")
@@ -160,7 +160,7 @@ struct SettingsView: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "waveform.path.ecg")
                                             .font(.system(size: 14, weight: .medium))
-                                        Text(stepConverter.hasEverProfiled
+                                        Text(gaitPipeline.hasEverProfiled
                                              ? "Re-profile"
                                              : "Profile Now")
                                             .font(.system(size: 15, weight: .semibold))
@@ -192,7 +192,7 @@ struct SettingsView: View {
                                             .foregroundColor(Theme.textSecondary)
                                         
                                         HStack(spacing: 6) {
-                                            Text(String(format: "%.2f", stepConverter.effectiveStepLength))
+                                            Text(String(format: "%.2f", gaitPipeline.effectiveStepLength))
                                                 .font(.system(size: 32, weight: .bold, design: .monospaced))
                                                 .foregroundColor(Theme.textPrimary)
                                             
@@ -218,17 +218,17 @@ struct SettingsView: View {
                                         color: Theme.safe,
                                         title: "Dynamic",
                                         desc: "Real-time measurement while walking",
-                                        isActive: stepConverter.stepLengthSource == .dynamic
+                                        isActive: gaitPipeline.stepLengthSource == .dynamic
                                     )
                                     
                                     priorityRow(
                                         icon: "figure.walk",
                                         color: Theme.accent,
                                         title: "Calibrated",
-                                        desc: stepConverter.calibrator.effectiveStepLength
+                                        desc: gaitPipeline.calibrator.effectiveStepLength
                                             .map { "\(String(format: "%.2f", $0)) m/step" }
                                             ?? "Not yet calibrated",
-                                        isActive: stepConverter.stepLengthSource == .calibrated
+                                        isActive: gaitPipeline.stepLengthSource == .calibrated
                                     )
                                     
                                     priorityRow(
@@ -236,7 +236,7 @@ struct SettingsView: View {
                                         color: Theme.textDisabled,
                                         title: "Default",
                                         desc: "0.65 m/step (population average)",
-                                        isActive: stepConverter.stepLengthSource == .defaultValue
+                                        isActive: gaitPipeline.stepLengthSource == .defaultValue
                                     )
                                 }
                                 
@@ -245,7 +245,7 @@ struct SettingsView: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "arrow.triangle.2.circlepath")
                                             .font(.system(size: 14, weight: .medium))
-                                        Text(stepConverter.hasEverCalibrated
+                                        Text(gaitPipeline.hasEverCalibrated
                                              ? "Recalibrate"
                                              : "Calibrate Now")
                                         .font(.system(size: 15, weight: .semibold))
@@ -290,7 +290,7 @@ struct SettingsView: View {
                                     Image(systemName: "list.bullet.clipboard")
                                         .font(.system(size: 13))
                                         .foregroundColor(Theme.textSecondary)
-                                    Text("\(stepConverter.distanceLogCount) entries logged")
+                                    Text("\(gaitPipeline.distanceLogCount) entries logged")
                                         .font(.system(size: 13, weight: .medium, design: .monospaced))
                                         .foregroundColor(Theme.textSecondary)
                                     Spacer()
@@ -336,7 +336,7 @@ struct SettingsView: View {
                                     // Log Distance 按钮
                                     Button(action: {
                                         showNoDetectionWarning = false
-                                        let success = stepConverter.logDistance(from: detections)
+                                        let success = gaitPipeline.logDistance(from: detections)
                                         if !success {
                                             // 没有检测到任何有距离信息的物体
                                             withAnimation { showNoDetectionWarning = true }
@@ -364,7 +364,7 @@ struct SettingsView: View {
                                     
                                     // Copy CSV 按钮
                                     Button(action: {
-                                        let csv = stepConverter.exportDistanceLogCSV()
+                                        let csv = gaitPipeline.exportDistanceLogCSV()
                                         UIPasteboard.general.string = csv
                                         withAnimation { showDistanceCopiedConfirmation = true }
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -377,21 +377,21 @@ struct SettingsView: View {
                                             Text("Copy CSV")
                                                 .font(.system(size: 13, weight: .semibold))
                                         }
-                                        .foregroundColor(stepConverter.distanceLogCount == 0 ? Theme.textDisabled : Theme.warning)
+                                        .foregroundColor(gaitPipeline.distanceLogCount == 0 ? Theme.textDisabled : Theme.warning)
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 10)
-                                        .background(stepConverter.distanceLogCount == 0 ? Theme.backgroundElevated : Theme.warning.opacity(0.12))
+                                        .background(gaitPipeline.distanceLogCount == 0 ? Theme.backgroundElevated : Theme.warning.opacity(0.12))
                                         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(stepConverter.distanceLogCount == 0 ? Theme.border : Theme.warning.opacity(0.25), lineWidth: 1)
+                                                .stroke(gaitPipeline.distanceLogCount == 0 ? Theme.border : Theme.warning.opacity(0.25), lineWidth: 1)
                                         )
                                     }
-                                    .disabled(stepConverter.distanceLogCount == 0)
+                                    .disabled(gaitPipeline.distanceLogCount == 0)
                                     
                                     // Clear 按钮
                                     Button(action: {
-                                        stepConverter.clearDistanceLog()
+                                        gaitPipeline.clearDistanceLog()
                                         showDistanceCopiedConfirmation = false
                                         showNoDetectionWarning = false
                                     }) {
@@ -401,7 +401,7 @@ struct SettingsView: View {
                                             Text("Clear")
                                                 .font(.system(size: 13, weight: .semibold))
                                         }
-                                        .foregroundColor(stepConverter.distanceLogCount == 0 ? Theme.textDisabled : Theme.textSecondary)
+                                        .foregroundColor(gaitPipeline.distanceLogCount == 0 ? Theme.textDisabled : Theme.textSecondary)
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 10)
                                         .background(Theme.backgroundElevated)
@@ -411,7 +411,7 @@ struct SettingsView: View {
                                                 .stroke(Theme.border, lineWidth: 1)
                                         )
                                     }
-                                    .disabled(stepConverter.distanceLogCount == 0)
+                                    .disabled(gaitPipeline.distanceLogCount == 0)
                                 }
                             }
                         }
@@ -647,7 +647,7 @@ struct SettingsView: View {
     
     private var stepSourceBadge: some View {
         let (text, color): (String, Color) = {
-            switch stepConverter.stepLengthSource {
+            switch gaitPipeline.stepLengthSource {
             case .dynamic:      return ("Dynamic", Theme.safe)
             case .calibrated:   return ("Calibrated", Theme.accent)
             case .defaultValue: return ("Default", Theme.textDisabled)
@@ -671,7 +671,7 @@ struct SettingsView: View {
     
     private var gaitSourceBadge: some View {
         let (text, color): (String, Color) = {
-            if stepConverter.hasEverProfiled {
+            if gaitPipeline.hasEverProfiled {
                 return ("Profiled", Theme.accent)
             } else {
                 return ("Default", Theme.textDisabled)

@@ -58,7 +58,7 @@ struct Detection: Identifiable {
     // 全部播报就变成报菜名，只报餐桌就够了。
     //
     // suppressedIDs()  → 返回应被抑制的小框 ID 集合（DetectionOverlay 用于降低透明度）
-    // suppressContained() → 返回过滤后的数组（FeedbackManager 用于语音管道）
+    // suppressContained() → 返回过滤后的数组（FeedbackPipeline 用于语音管道）
     //
     // 三个条件同时满足才抑制：
     //   1. 大框面积 > 小框面积
