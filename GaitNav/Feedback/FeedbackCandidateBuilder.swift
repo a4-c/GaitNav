@@ -6,7 +6,7 @@ struct FeedbackCandidateBuilder {
         from detections: [Detection],
         previousIDs: Set<UUID>,
         // 只依赖距离转步数接口，避免反馈候选构建器感知完整的步态编排器
-        gaitPipeline: StepDistanceConverting,
+        stepDistanceConverter: StepDistanceConverting,
         distanceMode: FeedbackDistanceMode,
         isCountdownActive: Bool,
         configuration: FeedbackConfiguration,
@@ -28,8 +28,10 @@ struct FeedbackCandidateBuilder {
                 // 没有距离信息的物体无法判断危险程度，跳过
                 guard let distance = detection.distance else { return nil }
                 
-                let stableSteps = gaitPipeline.distanceToStableSteps(distance)
-                let adaptiveSteps = gaitPipeline.distanceToSteps(distance)
+                // 使用稳定步长换算倒数前的剩余步数，避免动态估计波动影响首次引导
+                let stableSteps = stepDistanceConverter.distanceToStableSteps(distance)
+                // 使用当前有效步长换算实时剩余步数，供倒数阶段应用动态修正
+                let adaptiveSteps = stepDistanceConverter.distanceToSteps(distance)
                 // 倒数前使用标定/默认步长，保持用户已经听到的空间尺度稳定。
                 // 倒数激活后允许现有自适应估计修正近距离反馈。
                 let steps = shouldUseAdaptiveSteps ? adaptiveSteps : stableSteps

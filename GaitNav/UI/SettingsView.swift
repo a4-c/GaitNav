@@ -13,7 +13,7 @@ import UIKit
 struct SettingsView: View {
     
     @Binding var feedbackDistanceMode: FeedbackDistanceMode
-    @ObservedObject var gaitPipeline: GaitPipeline
+    @ObservedObject var gaitCoordinator: GaitCoordinator
     @Environment(\.dismiss) var dismiss
     
     // 请求打开标定页面的回调
@@ -102,7 +102,7 @@ struct SettingsView: View {
                                         
                                         HStack(spacing: 3) {
                                             Text(String(format: "%.3f",
-                                                        1.0 + (gaitPipeline.gaitProfiler.effectivePeakDevEma ?? 0.05) * 0.7))
+                                                        1.0 + (gaitCoordinator.gaitProfiler.effectivePeakDevEma ?? 0.05) * 0.7))
                                                 .font(.system(size: 24, weight: .bold, design: .monospaced))
                                                 .foregroundColor(Theme.textPrimary)
                                             Text("g")
@@ -124,7 +124,7 @@ struct SettingsView: View {
                                         
                                         HStack(spacing: 3) {
                                             Text(String(format: "%.2f",
-                                                        (gaitPipeline.gaitProfiler.effectiveIntervalEma ?? 0.5) * 0.7))
+                                                        (gaitCoordinator.gaitProfiler.effectiveIntervalEma ?? 0.5) * 0.7))
                                                 .font(.system(size: 24, weight: .bold, design: .monospaced))
                                                 .foregroundColor(Theme.textPrimary)
                                             Text("s")
@@ -153,7 +153,7 @@ struct SettingsView: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "waveform.path.ecg")
                                             .font(.system(size: 14, weight: .medium))
-                                        Text(gaitPipeline.hasEverProfiled
+                                        Text(gaitCoordinator.hasEverProfiled
                                              ? "Re-profile"
                                              : "Profile Now")
                                             .font(.system(size: 15, weight: .semibold))
@@ -185,7 +185,7 @@ struct SettingsView: View {
                                             .foregroundColor(Theme.textSecondary)
                                         
                                         HStack(spacing: 6) {
-                                            Text(String(format: "%.2f", gaitPipeline.effectiveStepLength))
+                                            Text(String(format: "%.2f", gaitCoordinator.effectiveStepLength))
                                                 .font(.system(size: 32, weight: .bold, design: .monospaced))
                                                 .foregroundColor(Theme.textPrimary)
                                             
@@ -211,17 +211,17 @@ struct SettingsView: View {
                                         color: Theme.safe,
                                         title: "Dynamic",
                                         desc: "Real-time measurement while walking",
-                                        isActive: gaitPipeline.stepLengthSource == .dynamic
+                                        isActive: gaitCoordinator.stepLengthSource == .dynamic
                                     )
                                     
                                     priorityRow(
                                         icon: "figure.walk",
                                         color: Theme.accent,
                                         title: "Calibrated",
-                                        desc: gaitPipeline.calibrator.effectiveStepLength
+                                        desc: gaitCoordinator.calibrator.effectiveStepLength
                                             .map { "\(String(format: "%.2f", $0)) m/step" }
                                             ?? "Not yet calibrated",
-                                        isActive: gaitPipeline.stepLengthSource == .calibrated
+                                        isActive: gaitCoordinator.stepLengthSource == .calibrated
                                     )
                                     
                                     priorityRow(
@@ -229,7 +229,7 @@ struct SettingsView: View {
                                         color: Theme.textDisabled,
                                         title: "Default",
                                         desc: "0.65 m/step (population average)",
-                                        isActive: gaitPipeline.stepLengthSource == .defaultValue
+                                        isActive: gaitCoordinator.stepLengthSource == .defaultValue
                                     )
                                 }
                                 
@@ -238,7 +238,7 @@ struct SettingsView: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "arrow.triangle.2.circlepath")
                                             .font(.system(size: 14, weight: .medium))
-                                        Text(gaitPipeline.hasEverCalibrated
+                                        Text(gaitCoordinator.hasEverCalibrated
                                              ? "Recalibrate"
                                              : "Calibrate Now")
                                         .font(.system(size: 15, weight: .semibold))
@@ -503,7 +503,7 @@ struct SettingsView: View {
     
     private var stepSourceBadge: some View {
         let (text, color): (String, Color) = {
-            switch gaitPipeline.stepLengthSource {
+            switch gaitCoordinator.stepLengthSource {
             case .dynamic:      return ("Dynamic", Theme.safe)
             case .calibrated:   return ("Calibrated", Theme.accent)
             case .defaultValue: return ("Default", Theme.textDisabled)
@@ -527,7 +527,7 @@ struct SettingsView: View {
     
     private var gaitSourceBadge: some View {
         let (text, color): (String, Color) = {
-            if gaitPipeline.hasEverProfiled {
+            if gaitCoordinator.hasEverProfiled {
                 return ("Profiled", Theme.accent)
             } else {
                 return ("Default", Theme.textDisabled)

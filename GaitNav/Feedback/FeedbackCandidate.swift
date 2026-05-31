@@ -1,7 +1,7 @@
 import Foundation
 
 // 把 Detection 和计算出的附加信息打包在一起
-// 只在 FeedbackPipeline 内部使用
+// 只在 FeedbackEngine 内部使用
 struct FeedbackCandidate {
     let detection: Detection
     let distance: Float

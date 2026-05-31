@@ -44,7 +44,7 @@ final class StepLengthResolver {
     
     // 每次访问时实时计算，不存储值
     // 外部模块（比如 DetectionOverlay）不需要关心步长是怎么来的
-    // 只需要调用 gaitPipeline.effectiveStepLength，总能拿到一个合理的值
+    // 只需要调用 gaitCoordinator.effectiveStepLength，总能拿到一个合理的值
     //
     // 三级优先级：
     //   1. 动态步长
@@ -111,7 +111,7 @@ final class StepLengthResolver {
     }
     
     // 使用稳定的标定/默认步长换算距离。
-    // FeedbackPipeline 在倒数前使用它，避免剩余步数反向增加造成混乱。
+    // FeedbackEngine 在倒数前使用它，避免剩余步数反向增加造成混乱。
     func distanceToStableSteps(_ distance: Float) -> Int {
         // 稳定路径刻意不读取短时间内可能波动的动态步长
         return Int(ceil(distance / stableStepLength))

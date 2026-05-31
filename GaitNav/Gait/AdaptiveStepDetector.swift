@@ -95,7 +95,7 @@ struct AdaptiveStepDetector {
         self.intervalEma = profile?.intervalEma ?? configuration.defaultIntervalEma
     }
     
-    // 当前已经收敛的 EMA 档案，profiling 结束时由 GaitPipeline 读取并保存
+    // 当前已经收敛的 EMA 档案，profiling 结束时由 GaitCoordinator 读取并保存
     var currentProfile: StepDetectionProfile {
         // 返回值类型只包含可持久化参数，不暴露状态机的瞬时状态
         return StepDetectionProfile(peakDevEma: peakDevEma, intervalEma: intervalEma)
@@ -188,7 +188,7 @@ struct AdaptiveStepDetector {
         // 记录这一步的时间
         lastStepTime = now
         
-        // 返回 true，通知 GaitPipeline 分发本次确认步伐
+        // 返回 true，通知 GaitCoordinator 分发本次确认步伐
         return true
     }
     

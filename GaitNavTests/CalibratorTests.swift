@@ -84,7 +84,7 @@ final class CalibratorTests: XCTestCase {
     
     // MARK: - stopCalibration 验证
     
-    // 没有 ARSession 时停止标定 → 应显示错误且通知 GaitPipeline
+    // 没有 ARSession 时停止标定 → 应显示错误且通知 GaitCoordinator
     func testStopCalibration_noARSession_showsError() {
         calibrator.isCalibrating = true
         calibrator.arSession = nil
@@ -100,7 +100,7 @@ final class CalibratorTests: XCTestCase {
         // 没有 startPosition → "Error: no start position."
         XCTAssertTrue(calibrator.statusMessage.contains("Error"),
                       "没有起点位置应显示错误信息")
-        XCTAssertTrue(stoppedCallbackCalled, "应通知 GaitPipeline 恢复动态模式")
+        XCTAssertTrue(stoppedCallbackCalled, "应通知 GaitCoordinator 恢复动态模式")
     }
     
     // 步数不足 5 步时停止 → 应提示步数不够

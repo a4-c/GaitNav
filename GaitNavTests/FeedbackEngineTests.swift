@@ -1,7 +1,7 @@
 import XCTest
 @testable import GaitNav
 
-// FeedbackPipeline 单元测试
+// FeedbackEngine 单元测试
 // 测试对象：焦点获取→首报、侧边过滤、突然出现警告、倒数逻辑、米数模式阈值
 //
 // 测试策略：
@@ -40,11 +40,31 @@ final class MockSpeechManager: SpeechManager {
     }
 }
 
-final class FeedbackPipelineTests: XCTestCase {
+// MockStepDistanceConverter：使用固定步长完成距离换算，让反馈测试不依赖完整的步态协调器
+final class MockStepDistanceConverter: StepDistanceConverting {
+    
+    // 固定步长沿用应用默认值，保持现有测试预期不变
+    private let stepLength: Float = 0.65
+    
+    // 使用固定步长模拟实时距离换算路径
+    func distanceToSteps(_ distance: Float) -> Int {
+        // 沿用正式实现的向上取整策略，避免低估剩余步数
+        return Int((distance / stepLength).rounded(.up))
+    }
+    
+    // 使用同一固定步长模拟稳定距离换算路径
+    func distanceToStableSteps(_ distance: Float) -> Int {
+        // 测试 mock 没有动态步长，因此稳定路径与实时路径结果一致
+        return Int((distance / stepLength).rounded(.up))
+    }
+}
+
+final class FeedbackEngineTests: XCTestCase {
     
     private var mockSpeech: MockSpeechManager!
-    private var gaitPipeline: GaitPipeline!
-    private var feedbackPipeline: FeedbackPipeline!
+    // 固定步长转换器让测试只关注反馈决策，不创建完整步态协调器
+    private var stepDistanceConverter: MockStepDistanceConverter!
+    private var feedbackEngine: FeedbackEngine!
     
     override func setUp() {
         super.setUp()
@@ -52,8 +72,10 @@ final class FeedbackPipelineTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "calibratedStepLength")
         
         mockSpeech = MockSpeechManager()
-        gaitPipeline = GaitPipeline()
-        feedbackPipeline = FeedbackPipeline(speech: mockSpeech, gaitPipeline: gaitPipeline, distanceMode: .steps)
+        // 每个测试重新创建固定步长转换器，避免测试之间共享状态
+        stepDistanceConverter = MockStepDistanceConverter()
+        // 将最小距离换算接口注入反馈引擎，验证窄依赖可以独立工作
+        feedbackEngine = FeedbackEngine(speech: mockSpeech, stepDistanceConverter: stepDistanceConverter, distanceMode: .steps)
     }
     
     override func tearDown() {
@@ -70,7 +92,7 @@ final class FeedbackPipelineTests: XCTestCase {
             distance: 3.0   // 3.0m / 0.65m ≈ 5 步
         )
         
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         
         XCTAssertFalse(mockSpeech.allTexts.isEmpty, "首次看到物体应触发播报")
         if let text = mockSpeech.allTexts.first {
@@ -85,7 +107,7 @@ final class FeedbackPipelineTests: XCTestCase {
     // 物体在左侧（midX < 0.25）→ 11 o'clock
     func testDirection_left() {
         let detection = makeDetection(midX: 0.1, distance: 2.0)
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         
         if let text = mockSpeech.allTexts.first {
             XCTAssertTrue(text.contains("11 o'clock"), "左侧物体应报 11 o'clock，实际: \(text)")
@@ -95,7 +117,7 @@ final class FeedbackPipelineTests: XCTestCase {
     // 物体在中央（0.25 ≤ midX < 0.75）→ 12 o'clock
     func testDirection_center() {
         let detection = makeDetection(midX: 0.5, distance: 2.0)
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         
         if let text = mockSpeech.allTexts.first {
             XCTAssertTrue(text.contains("12 o'clock"), "中央物体应报 12 o'clock，实际: \(text)")
@@ -105,7 +127,7 @@ final class FeedbackPipelineTests: XCTestCase {
     // 物体在右侧（midX ≥ 0.75）→ 1 o'clock
     func testDirection_right() {
         let detection = makeDetection(midX: 0.9, distance: 2.0)
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         
         if let text = mockSpeech.allTexts.first {
             XCTAssertTrue(text.contains("1 o'clock"), "右侧物体应报 1 o'clock，实际: \(text)")
@@ -119,7 +141,7 @@ final class FeedbackPipelineTests: XCTestCase {
         // midX = 0.1 → 左侧边（< 0.35）
         // distance = 5.0m → 约 8 步（> sideIgnoreSteps=5）
         let detection = makeDetection(midX: 0.1, distance: 5.0)
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         
         XCTAssertTrue(mockSpeech.allTexts.isEmpty, "侧边远处物体不应触发播报")
     }
@@ -129,7 +151,7 @@ final class FeedbackPipelineTests: XCTestCase {
         // midX = 0.1 → 左侧边
         // distance = 1.5m → 约 3 步（≤ 3 步的侧边物体仍会被关注）
         let detection = makeDetection(midX: 0.1, distance: 1.5)
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         
         XCTAssertFalse(mockSpeech.allTexts.isEmpty, "近距离侧边物体应触发播报")
     }
@@ -139,7 +161,7 @@ final class FeedbackPipelineTests: XCTestCase {
     // 没有距离信息的物体应被忽略
     func testNoDistance_ignored() {
         let detection = makeDetection(midX: 0.5, distance: nil)
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         
         XCTAssertTrue(mockSpeech.allTexts.isEmpty, "无距离信息的物体不应触发播报")
     }
@@ -151,7 +173,7 @@ final class FeedbackPipelineTests: XCTestCase {
         let close = makeDetection(midX: 0.5, distance: 2.0, label: "chair")
         let far = makeDetection(midX: 0.5, distance: 6.0, label: "table")
         
-        feedbackPipeline.update(with: [close, far])
+        feedbackEngine.update(with: [close, far])
         
         XCTAssertEqual(mockSpeech.allTexts.count, 1, "应只播报一个物体")
         if let text = mockSpeech.allTexts.first {
@@ -165,12 +187,12 @@ final class FeedbackPipelineTests: XCTestCase {
     func testSuddenAppearance_urgentAlert() {
         // 第一帧：有一个远处物体
         let far = makeDetection(midX: 0.5, distance: 6.0, label: "table")
-        feedbackPipeline.update(with: [far])
+        feedbackEngine.update(with: [far])
         mockSpeech.reset()
         
         // 第二帧：突然出现近距离物体
         let sudden = makeDetection(midX: 0.5, distance: 0.5, label: "person")
-        feedbackPipeline.update(with: [far, sudden])
+        feedbackEngine.update(with: [far, sudden])
         
         XCTAssertFalse(mockSpeech.allTexts.isEmpty, "突然出现的近距离物体应触发播报")
         if let text = mockSpeech.allTexts.first {
@@ -184,11 +206,11 @@ final class FeedbackPipelineTests: XCTestCase {
     func testDebounce_noRepeatWithinInterval() {
         let detection = makeDetection(midX: 0.5, distance: 4.0, label: "chair")
         
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         let firstCount = mockSpeech.allTexts.count
         
         // 立刻再次 update（同一物体，距离没有跨过阈值）
-        feedbackPipeline.update(with: [detection])
+        feedbackEngine.update(with: [detection])
         let secondCount = mockSpeech.allTexts.count
         
         XCTAssertEqual(firstCount, secondCount,
@@ -200,22 +222,22 @@ final class FeedbackPipelineTests: XCTestCase {
     // 物体消失 → 应释放焦点，新物体应能被播报
     func testFocusRelease_afterObjectDisappears() {
         let obj1 = makeDetection(midX: 0.5, distance: 3.0, label: "chair")
-        feedbackPipeline.update(with: [obj1])
+        feedbackEngine.update(with: [obj1])
         
         // 等待足够时间让防抖冷却（minAnnouncementInterval = 1.5s）
         // 使用 Thread.sleep 而非 expectation + DispatchQueue.main.asyncAfter，
         // 因为 waitForExpectations 会阻塞主线程，导致 asyncAfter 的 block 永远无法执行（死锁）。
-        // FeedbackPipeline 的防抖基于 Date() 比较，只需要实际时间流逝即可。
+        // FeedbackEngine 的防抖基于 Date() 比较，只需要实际时间流逝即可。
         Thread.sleep(forTimeInterval: 1.6)
         
         mockSpeech.reset()
         
         // 物体消失
-        feedbackPipeline.update(with: [])
+        feedbackEngine.update(with: [])
         
         // 新物体出现
         let obj2 = makeDetection(midX: 0.5, distance: 2.0, label: "person")
-        feedbackPipeline.update(with: [obj2])
+        feedbackEngine.update(with: [obj2])
         
         XCTAssertFalse(mockSpeech.allTexts.isEmpty, "旧物体消失后新物体应能被播报")
         if let text = mockSpeech.allTexts.first {

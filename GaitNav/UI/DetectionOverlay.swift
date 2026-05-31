@@ -10,7 +10,8 @@ import SwiftUI
 struct DetectionOverlay: View {
     
     let detections: [Detection]
-    let gaitPipeline: GaitPipeline
+    // 叠加层只需要距离转步数能力，不依赖完整的步态协调器
+    let stepDistanceConverter: StepDistanceConverting
     
     var body: some View {
         GeometryReader { geometry in
@@ -85,7 +86,7 @@ struct DetectionOverlay: View {
                     .foregroundColor(color)
                 
                 // 步数
-                let steps = gaitPipeline.distanceToSteps(d)
+                let steps = stepDistanceConverter.distanceToSteps(d)
                 Text("(\(steps) steps)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Theme.textSecondary)

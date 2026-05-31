@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     
     @StateObject private var perceptionPipeline = PerceptionPipeline()
-    @StateObject private var gaitPipeline = GaitPipeline()
+    @StateObject private var gaitCoordinator = GaitCoordinator()
     
     @State private var showCalibration = false
     @State private var showGaitProfiler = false
@@ -15,7 +15,7 @@ struct ContentView: View {
     @State private var isPaused = false
     
     private let speech = SpeechManager()
-    @State private var feedbackPipeline: FeedbackPipeline? = nil
+    @State private var feedbackEngine: FeedbackEngine? = nil
     
     var body: some View {
         ZStack {
@@ -31,7 +31,8 @@ struct ContentView: View {
             // 中层：检测框叠加层
             // =============================================================
             
-            DetectionOverlay(detections: perceptionPipeline.detections, gaitPipeline: gaitPipeline)
+            // 叠加层只接收距离换算接口，避免感知完整的步态协调职责
+            DetectionOverlay(detections: perceptionPipeline.detections, stepDistanceConverter: gaitCoordinator)
                 .ignoresSafeArea()
             
             // =============================================================
@@ -73,19 +74,22 @@ struct ContentView: View {
         .onAppear {
             perceptionPipeline.start()
             
-            gaitPipeline.setARSession(perceptionPipeline.session)
-            gaitPipeline.start()
+            gaitCoordinator.setARSession(perceptionPipeline.session)
+            gaitCoordinator.start()
             
-            let pipeline = FeedbackPipeline(speech: speech, gaitPipeline: gaitPipeline, distanceMode: feedbackDistanceMode)
-            feedbackPipeline = pipeline
+            // 使用步态协调器提供的窄距离换算接口创建反馈引擎
+            let engine = FeedbackEngine(speech: speech, stepDistanceConverter: gaitCoordinator, distanceMode: feedbackDistanceMode)
+            // 保存反馈引擎，供后续感知结果和模式切换事件继续调用
+            feedbackEngine = engine
             
-            gaitPipeline.onStepDetected = { [self] in
+            gaitCoordinator.onStepDetected = { [self] in
                 guard !showCalibration, !showGaitProfiler, !showSettings, isFeedbackActive else { return }
-                pipeline.handleStep(with: perceptionPipeline.detections)
+                // 将确认步伐和最新感知结果交给反馈引擎推进同步倒数
+                engine.handleStep(with: perceptionPipeline.detections)
             }
         }
         .onDisappear {
-            gaitPipeline.stop()
+            gaitCoordinator.stop()
             speech.stop()
         }
         .onReceive(perceptionPipeline.$fps) { fps in
@@ -99,21 +103,21 @@ struct ContentView: View {
         }
         .onReceive(perceptionPipeline.$detections) { detections in
             guard isFeedbackActive, !showCalibration, !showGaitProfiler, !showSettings else { return }
-            feedbackPipeline?.update(with: detections)
+            feedbackEngine?.update(with: detections)
         }
         .onChange(of: feedbackDistanceMode) { oldMode, newMode in
             newMode.save()
-            feedbackPipeline?.distanceMode = newMode
+            feedbackEngine?.distanceMode = newMode
         }
         .sheet(isPresented: $showCalibration) {
-            CalibrationView(calibrator: gaitPipeline.calibrator)
+            CalibrationView(calibrator: gaitCoordinator.calibrator)
                 .onAppear {
                     speech.stop()
                 }
         }
         // 步态分析页面（学习个性化波峰阈值）
         .sheet(isPresented: $showGaitProfiler) {
-            GaitProfilerView(gaitProfiler: gaitPipeline.gaitProfiler)
+            GaitProfilerView(gaitProfiler: gaitCoordinator.gaitProfiler)
                 .onAppear {
                     speech.stop()
                 }
@@ -121,7 +125,7 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(
                 feedbackDistanceMode: $feedbackDistanceMode,
-                gaitPipeline: gaitPipeline,
+                gaitCoordinator: gaitCoordinator,
                 onCalibrateRequested: {
                     showSettings = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
@@ -294,7 +298,7 @@ struct ContentView: View {
             // 步长指示器（仅展示，通过设置页标定）
             hudCapsule {
                 HStack(spacing: 6) {
-                    if gaitPipeline.isDynamicActive {
+                    if gaitCoordinator.isDynamicActive {
                         Circle()
                             .fill(Theme.safe)
                             .frame(width: 8, height: 8)
@@ -385,7 +389,7 @@ struct ContentView: View {
     // =====================================================================
     
     private var stepLengthLabel: String {
-        let value = String(format: "%.2f", gaitPipeline.effectiveStepLength)
+        let value = String(format: "%.2f", gaitCoordinator.effectiveStepLength)
         return "\(value) m/step"
     }
 }
