@@ -5,7 +5,8 @@ struct FeedbackCandidateBuilder {
     func buildCandidates(
         from detections: [Detection],
         previousIDs: Set<UUID>,
-        gaitPipeline: GaitPipeline,
+        // 只依赖距离转步数接口，避免反馈候选构建器感知完整的步态编排器
+        gaitPipeline: StepDistanceConverting,
         distanceMode: FeedbackDistanceMode,
         isCountdownActive: Bool,
         configuration: FeedbackConfiguration,

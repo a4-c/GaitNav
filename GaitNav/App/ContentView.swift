@@ -135,7 +135,6 @@ struct ContentView: View {
                         showGaitProfiler = true
                     }
                 },
-                detections: perceptionPipeline.detections,  // [实验] 距离日志实验用，实验结束后删除
                 perceptionPipeline: perceptionPipeline      // [实验] 性能日志实验用，实验结束后删除
             )
             .onAppear {

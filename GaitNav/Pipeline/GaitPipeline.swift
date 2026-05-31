@@ -1,4 +1,3 @@
-import CoreMotion
 import ARKit
 import Combine
 
@@ -20,7 +19,11 @@ import Combine
 //
 // 三级优先级：
 //   动态步长（用户正在走，实时测量）> 标定步长（用户静止，但之前标定过）> 默认步长（从未标定，兜底值）
-class GaitPipeline: ObservableObject {
+//
+// 拆分说明：
+//   GaitPipeline 现在只负责协调子模块；CoreMotion、检测算法和步长解析分别下沉到独立类型。
+//   这样外部调用方式保持不变，同时每个子模块都可以单独测试。
+class GaitPipeline: ObservableObject, StepDistanceConverting {
     
     // =====================================================================
     // 子模块
@@ -41,192 +44,21 @@ class GaitPipeline: ObservableObject {
     // 动态步长估算器：实时逐步计算步长
     private let dynamicEstimator = DynamicStepEstimator()
     
-    // =====================================================================
-    // [实验] 距离日志（Distance Estimation Accuracy 实验用）
-    // 每次点击 Log Distance 时，读取最近检测物体的 stableDistance，实验结束后删除
-    // =====================================================================
+    // 步伐检测参数：统一提供采样间隔、阈值比率和 EMA 默认值
+    private let stepDetectionConfiguration = StepDetectionConfiguration()
     
-    // 单条距离记录
-    struct DistanceLogEntry {
-        // 试验编号（自动递增）
-        let trialID: Int
-        // 系统估计距离（stableDistance）
-        let estimatedDistance: Float
-        // 检测到的物体标签
-        let objectLabel: String
-        // 记录时间
-        let timestamp: Date
-    }
+    // 加速度计：只负责 CoreMotion 采样和合加速度计算
+    private lazy var accelerometer = Accelerometer(updateInterval: stepDetectionConfiguration.accelerometerUpdateInterval)
     
-    // 距离日志数组
-    private(set) var distanceLog: [DistanceLogEntry] = []
+    // 自适应步伐检测器：只负责根据合加速度确认有效步伐
+    private lazy var stepDetector = AdaptiveStepDetector(configuration: stepDetectionConfiguration)
     
-    // 已记录的距离数量（@Published 驱动 UI 实时显示计数）
-    @Published var distanceLogCount: Int = 0
-    
-    // =====================================================================
-    // 加速度计
-    // =====================================================================
-    
-    // CMMotionManager：运动传感器管理器
-    // 它是访问加速度计的入口
-    private let motionManager = CMMotionManager()
-    
-    // =====================================================================
-    // 自适应步伐检测：状态机
-    // =====================================================================
-    //
-    // 双阈值迟滞（Schmitt trigger）状态机
-    //   比简单的"local max > threshold"更鲁棒
-    //   信号必须先升至 TH_HIGH 以上，再回落至 TH_LOW 以下，才算确认一个波峰
-    //   这天然防止了信号在阈值附近的小幅抖动造成的重复计数
-    //
-    //   状态转换：
-    //     waitingPeak -> (偏差 > TH_HIGH) -> peakTracking
-    //     peakTracking -> (偏差 < TH_LOW) -> waitingPeak（确认一步）
-    //     peakTracking 期间持续追踪最大偏差值，用于更新 EMA
-    
-    // 状态机的两个状态
-    private enum PeakDetectionState {
-        case waitingPeak   // 等待信号升至上阈值
-        case peakTracking  // 正在追踪一个波峰，记录最大偏差
-    }
-    
-    // 当前状态
-    private var peakState: PeakDetectionState = .waitingPeak
-    
-    // peakTracking 状态下追踪到的最大偏差（重力基线以上的部分）
-    // 当信号回落至 TH_LOW 以下时，这个值就是本次波峰的确认偏差
-    private var trackingMaxDev: Double = 0
-    
-    // =====================================================================
-    // 自适应步伐检测：EMA 动态阈值
-    // =====================================================================
-    //
-    // 指数移动平均（EMA）持续追踪两个量：
-    //   1. peakDevEma：近期步伐波峰的平均偏差（合加速度超过重力基线的部分）
-    //      → 从中推导出 TH_HIGH 和 TH_LOW
-    //   2. intervalEma：近期步伐的平均时间间隔
-    //      → 从中推导出最小步间隔（防抖）
-    //
-    // EMA 更新公式：ema = α × 新值 + (1−α) × 旧值
-    // 其中 α = 0.2，代表最近 ~5 次观测贡献约 63% 的权重
-    //
-    // 初始值来自 GaitProfiler 的保存结果（如果做过 profiling）
-    // 否则使用保守的默认值，系统会在用户走的前几步内自动收敛
-    
-    // 波峰偏差的 EMA（单位：g，相对于重力基线）
-    // 代表"用户近期步伐波峰的平均强度"
-    private var peakDevEma: Double = 0.05
-    
-    // 步伐间隔的 EMA（单位：秒）
-    // 代表"用户近期步伐的平均周期"
-    private var intervalEma: TimeInterval = 0.5
-    
-    // 上一次成功检测到步伐的时间
-    // 用于计算步间隔和防抖
-    // .distantPast 代表一个极其遥远的过去时间
-    //   这样第一步检测时：
-    //     now.timeIntervalSince(.distantPast) = 一个巨大的正数
-    //     肯定 > 最小步间隔
-    //     所以第一步不会被误拦
-    private var lastStepTime: Date = .distantPast
-    
-    // 上一次确认波峰的时间（用于静止衰减判断）
-    private var lastPeakConfirmTime: Date = .distantPast
-    
-    // =====================================================================
-    // 信号处理参数（比率，非绝对值）
-    // =====================================================================
-    //
-    // 以下参数全部是信号处理领域的标准比率
-    // 它们相对于用户自身的信号，不依赖任何特定个体的步态特征
-    // 因此不需要通过实验来确定，可以直接引用信号处理文献
-    
-    // 重力基线：静止时合加速度的值
-    // 这是物理常数（1g），不是可调参数
-    private let gravityBaseline: Double = 1.0
-    
-    // EMA 平滑因子：每次更新时新值的权重
-    // α = 0.2 是指数平滑的标准选择
-    // 含义：初始值的残余权重 = (1−α)^n
-    //   5 步后：(0.8)^5 = 0.33 → 初始值只剩 33% 影响
-    //   10 步后：(0.8)^10 = 0.11 → 基本收敛
-    // 平衡了响应速度（快速适应步态变化）和稳定性（不因单步异常而跳变）
-    private let emaAlpha: Double = 0.2
-    
-    // 阈值比率：TH_HIGH = gravityBaseline + peakDevEma × peakThresholdRatio
-    // 将检测阈值设为近期平均波峰强度的 70%
-    // 含义：步伐加速度的步间变异系数约 20-30%
-    //   阈值设在均值的 70%，大约位于均值 − 1σ
-    //   理论上能捕获 ~84% 的步伐（单侧正态分布）
-    //   加上 EMA 持续适应，实际捕获率更高
-    // 参考：Pan & Tompkins (1985) 使用同族方法设定自适应阈值
-    private let peakThresholdRatio: Double = 0.7
-    
-    // 迟滞比率：TH_LOW = TH_HIGH × hysteresisRatio
-    // 标准 Schmitt trigger 设计使用 40-60% 的迟滞带
-    // 0.6 意味着信号必须回落到 TH_HIGH 的 60% 以下才确认波峰结束
-    // 这保证了一个完整的"升—降"起伏，避免小幅抖动重复触发
-    private let hysteresisRatio: Double = 0.6
-    
-    // 步间隔保护比率：minStepInterval = intervalEma × intervalGuardRatio
-    // 将最小步间隔设为平均步周期的 70%
-    // 含义：正常步频自然波动约 ±15%，最快步伐约为均值的 85%
-    //   70% 留出了足够余量，只拦截明显的同步弹跳（bounce）
-    private let intervalGuardRatio: Double = 0.7
-    
-    // 最小步间隔绝对下限（单位：秒）
-    // 基于人类短跑的运动学数据：
-    // Tyson Gay 在 2009 年世锦赛 100m 决赛中达到 4.68 步/秒（0.214 秒/步）
-    // 0.2 秒略低于此极限，确保即使是顶级短跑运动员的步伐也不会被误拦
-    // 数据来源：Pose Method 对 Berlin 2009 世锦赛的运动学分析
-    // 这是任何步频都不可能低于的物理下限
-    private let minAbsoluteInterval: TimeInterval = 0.2
-    
-    // 静止衰减超时（单位：秒）
-    // 如果超过此时间没有确认任何波峰，开始将 EMA 向默认值衰减
-    // 2 秒 ≈ 4 个正常步周期（0.5s × 4），足以确认用户已停止走路
-    private let decayTimeout: TimeInterval = 2.0
-    
-    // EMA 默认值：未做 profiling 时的保守初始值
-    // peakDevEma = 0.05g → 对应 TH_HIGH = 1.035g（能检测大多数人的步伐）
-    // intervalEma = 0.5s → 对应正常步频 2 步/秒
-    // defaultPeakDevEma 同时也是阈值的绝对下限：
-    //   衰减逻辑确保 peakDevEma 永远不会低于此值
-    //   → TH_HIGH 最低 = 1.0 + 0.05 × 0.7 = 1.035g
-    //   → 远高于静止状态下的传感器噪声（约 0.01-0.02g RMS）
-    //   → 不需要额外的绝对下限参数
-    private let defaultPeakDevEma: Double = 0.05
-    private let defaultIntervalEma: TimeInterval = 0.5
-    
-    // =====================================================================
-    // 动态阈值（从 EMA 实时计算）
-    // =====================================================================
-    
-    // 上阈值：信号偏差超过此值 → 进入 peakTracking 状态
-    // 由于衰减逻辑保证 peakDevEma ≥ defaultPeakDevEma (0.05)
-    // TH_HIGH 最低 = 1.0 + 0.05 × 0.7 = 1.035，不需要额外下限
-    private var thresholdHigh: Double {
-        gravityBaseline + peakDevEma * peakThresholdRatio
-    }
-    
-    // 下阈值：信号偏差低于此值 → 确认波峰，回到 waitingPeak 状态
-    private var thresholdLow: Double {
-        gravityBaseline + peakDevEma * peakThresholdRatio * hysteresisRatio
-    }
-    
-    // 动态最小步间隔：从步间隔 EMA 实时计算
-    private var effectiveMinStepInterval: TimeInterval {
-        max(intervalEma * intervalGuardRatio, minAbsoluteInterval)
-    }
+    // 步长解析器：统一处理动态、标定、默认步长的三级优先级
+    private lazy var stepLengthResolver = StepLengthResolver(dynamicEstimator: dynamicEstimator, calibrator: calibrator)
     
     // =====================================================================
     // 模式管理
     // =====================================================================
-    
-    // 当前加速度计是否在运行
-    private var isAccelerometerRunning = false
     
     // 当前的步伐分发模式
     //   .profiling：确认的步伐发给 GaitProfiler（EMA 从初始值开始收敛）
@@ -238,16 +70,8 @@ class GaitPipeline: ObservableObject {
         case calibration
     }
     
+    // 默认使用 live 模式，让 app 启动后可以直接进行导航
     private var currentMode: Mode = .live
-    
-    // =====================================================================
-    // 默认值
-    // =====================================================================
-    
-    // 默认步长，单位：米
-    // 当用户还没做过标定时，用这个值来换算步数
-    // 这样即使第一次打开 app，看到障碍物也能显示"大约几步"
-    private let defaultStepLength: Float = 0.65
     
     // =====================================================================
     // Combine 订阅
@@ -268,8 +92,7 @@ class GaitPipeline: ObservableObject {
     init() {
         // 从 GaitProfiler 加载已保存的 EMA 值（如果做过 profiling）
         // 否则使用保守默认值，系统会在前几步内自动收敛
-        peakDevEma = gaitProfiler.effectivePeakDevEma ?? defaultPeakDevEma
-        intervalEma = gaitProfiler.effectiveIntervalEma ?? defaultIntervalEma
+        stepDetector.applyProfile(savedDetectionProfile)
         
         // 设置 GaitProfiler 的回调
         // 分析开始时：切换到 profiling 模式（重置 EMA）
@@ -280,10 +103,13 @@ class GaitPipeline: ObservableObject {
         gaitProfiler.onProfilingStopped = { [weak self] in
             guard let self = self else { return }
             // 将当前已收敛的 EMA 值传给 GaitProfiler 保存到 UserDefaults
+            let currentProfile = self.stepDetector.currentProfile
+            // 将检测器当前的波峰 EMA 和步间隔 EMA 一并持久化
             self.gaitProfiler.saveProfile(
-                peakDevEma: self.peakDevEma,
-                intervalEma: self.intervalEma
+                peakDevEma: currentProfile.peakDevEma,
+                intervalEma: currentProfile.intervalEma
             )
+            // profiling 结束后恢复 live 模式，继续正常导航
             self.switchToLiveMode()
         }
         
@@ -330,50 +156,29 @@ class GaitPipeline: ObservableObject {
     // 对外接口
     // =====================================================================
     
+    // 对外保留原有嵌套类型名称，避免调用方感知步长解析器的内部拆分
+    typealias StepLengthSource = StepLengthResolver.Source
+
     // 每次访问时实时计算，不存储值
     // 外部模块（比如 DetectionOverlay）不需要关心步长是怎么来的
     // 只需要调用 gaitPipeline.effectiveStepLength，总能拿到一个合理的值
-    //
-    // 三级优先级：
-    //   1. 动态步长
-    //   2. 标定步长（本次或历史）
-    //   3. 默认步长
     var effectiveStepLength: Float {
-        // 检查动态步长是否有效（有值 + 未超时）
-        if let dynamic = dynamicEstimator.currentStepLength,
-           dynamicEstimator.isActive {
-            return dynamic
-        }
-        // 动态步长无效，回退到标定值
-        // 都没有则使用默认值
-        return calibrator.effectiveStepLength ?? defaultStepLength
+        // 委托给步长解析器，统一应用动态、标定和默认值三级优先级
+        return stepLengthResolver.effectiveStepLength
     }
     
     // 稳定引导步长：用于保持倒数前的语音距离一致。
     // 这里刻意忽略短时间内波动较大的动态步长估计。
     var stableStepLength: Float {
-        return calibrator.effectiveStepLength ?? defaultStepLength
+        // 委托给步长解析器，确保稳定路径不读取动态步长
+        return stepLengthResolver.stableStepLength
     }
     
     // 当前 effectiveStepLength 的值从哪一级取到的
     // SettingsView 用它来高亮对应的优先级行和徽章
-    //
-    // .dynamic      → 动态估算器有值且未超时
-    // .calibrated   → Calibrator 有可用的标定值（本次或历史）
-    // .defaultValue → 以上都没有，使用 0.65m 兜底
-    enum StepLengthSource {
-        case dynamic, calibrated, defaultValue
-    }
-    
     var stepLengthSource: StepLengthSource {
-        if let _ = dynamicEstimator.currentStepLength,
-           dynamicEstimator.isActive {
-            return .dynamic
-        }
-        if calibrator.effectiveStepLength != nil {
-            return .calibrated
-        }
-        return .defaultValue
+        // 委托给步长解析器，确保展示状态和实际计算使用同一套规则
+        return stepLengthResolver.stepLengthSource
     }
     
     // 用户是否曾经成功标定过（本次内存中有值，或磁盘上有历史记录）
@@ -391,36 +196,23 @@ class GaitPipeline: ObservableObject {
     // 动态步长当前是否处于活跃状态
     // ContentView 用它来决定是否显示 ⚡ 标记
     var isDynamicActive: Bool {
-        dynamicEstimator.isActive
+        // 委托给步长解析器，确保 UI 和距离换算使用同一个动态活跃判定
+        return stepLengthResolver.isDynamicActive
     }
     
     // 距离 → 步数转换
     func distanceToSteps(_ distance: Float) -> Int {
-        
-        // 步数 = 距离 / 步长
-        let steps = distance / effectiveStepLength
-        
-        // 为什么向上取整而不是四舍五入（round）？
-        //
-        //   四舍五入：3.088 → 3 步
-        //     用户以为还有 3 步就到了
-        //     实际可能 3 步走完还差一点点，但用户已经放松了
-        //
-        //   向上取整：3.088 → 4 步
-        //     用户以为还有 4 步
-        //     多报一步 → 用户会走得更谨慎 → 更安全
-        //
-        //   对于视障辅助来说，"安全"比"精确"更重要
-        //   多走一步没事，少走一步可能撞上障碍物
-        return Int(ceil(steps))
+        // 委托给步长解析器，继续使用向上取整的安全策略
+        return stepLengthResolver.distanceToSteps(distance)
     }
     
     // 使用稳定的标定/默认步长换算距离。
     // FeedbackPipeline 在倒数前使用它，避免剩余步数反向增加造成混乱。
     func distanceToStableSteps(_ distance: Float) -> Int {
-        return Int(ceil(distance / stableStepLength))
+        // 委托给步长解析器，确保倒数前的语音距离尺度保持稳定
+        return stepLengthResolver.distanceToStableSteps(distance)
     }
-    
+
     // =====================================================================
     // 启动 / 停止
     // =====================================================================
@@ -448,8 +240,7 @@ class GaitPipeline: ObservableObject {
         stopStepDetection()
         dynamicEstimator.reset()
         // 重置 EMA 到保守初始值，让自适应算法从零开始收敛
-        peakDevEma = defaultPeakDevEma
-        intervalEma = defaultIntervalEma
+        stepDetector.resetToDefaultProfile()
         currentMode = .profiling
         startStepDetection()
     }
@@ -461,8 +252,7 @@ class GaitPipeline: ObservableObject {
         // 重置动态估算器的状态（标定结束后会从零开始重新积累）
         dynamicEstimator.reset()
         // 从 UserDefaults 加载个性化 EMA
-        peakDevEma = gaitProfiler.effectivePeakDevEma ?? defaultPeakDevEma
-        intervalEma = gaitProfiler.effectiveIntervalEma ?? defaultIntervalEma
+        stepDetector.applyProfile(savedDetectionProfile)
         // 以标定模式重新启动加速度计
         currentMode = .calibration
         startStepDetection()
@@ -473,13 +263,21 @@ class GaitPipeline: ObservableObject {
         // 先停掉标定模式的加速度计
         stopStepDetection()
         // 从 UserDefaults 加载个性化 EMA
-        peakDevEma = gaitProfiler.effectivePeakDevEma ?? defaultPeakDevEma
-        intervalEma = gaitProfiler.effectiveIntervalEma ?? defaultIntervalEma
+        stepDetector.applyProfile(savedDetectionProfile)
         // 以动态模式重新启动加速度计
         currentMode = .live
         startStepDetection()
     }
     
+    // 从 GaitProfiler 的持久化结果构建检测器需要的 EMA 档案
+    private var savedDetectionProfile: StepDetectionProfile {
+        // 没有 profiling 数据时分别回退到配置提供的保守默认值
+        return StepDetectionProfile(
+            peakDevEma: gaitProfiler.effectivePeakDevEma ?? stepDetectionConfiguration.defaultPeakDevEma,
+            intervalEma: gaitProfiler.effectiveIntervalEma ?? stepDetectionConfiguration.defaultIntervalEma
+        )
+    }
+
     // =====================================================================
     // 开启 / 关闭 步伐检测
     // =====================================================================
@@ -488,114 +286,37 @@ class GaitPipeline: ObservableObject {
     private func startStepDetection() {
         
         // 防止重复启动
-        guard !isAccelerometerRunning else { return }
+        guard !accelerometer.isRunning else { return }
         
         // 检查设备是否有加速度计
-        guard motionManager.isAccelerometerAvailable else { return }
-        
-        isAccelerometerRunning = true
+        guard accelerometer.isAvailable else { return }
         
         // 重置状态机，避免上一个模式的残留状态影响新模式
-        resetDetectionState()
+        stepDetector.resetDetectionState()
         
-        // 设置采样间隔：每次读取加速度数据的时间间隔
-        // 1.0 / 20.0 = 0.05 秒 = 50 毫秒
-        // 也就是每秒采样 20 次（20Hz）
-        motionManager.accelerometerUpdateInterval = 1.0 / 20.0
-        
-        // 开始接收加速度计数据，直到调用 stopAccelerometerUpdates() 为止
-        // to: .main：指定回调在主线程执行
-        // withHandler: { data, error in ... }：
-        //   这个闭包每 0.05 秒被调用一次
-        //   data：CMAccelerometerData 类型，包含本次采样的加速度值
-        //     data.acceleration.x / .y / .z 分别是三个方向的加速度（单位是 g）
-        //   error：如果出错，这里不是 nil
-        motionManager.startAccelerometerUpdates(to: .main) { [weak self] data, error in
-            guard let self = self, let data = data else { return }
-            self.checkForStep(data: data)
+        // 开始接收合加速度，并把每次采样交给自适应步伐检测器
+        accelerometer.start { [weak self] magnitude, timestamp in
+            // pipeline 已经释放时忽略后续采样，避免闭包延长生命周期
+            self?.handleAccelerationMagnitude(magnitude, at: timestamp)
         }
     }
     
     // 停止加速度计
     private func stopStepDetection() {
-        guard isAccelerometerRunning else { return }
-        // 加速度计停止采集数据，之前注册的回调闭包不再被触发
-        motionManager.stopAccelerometerUpdates()
-        isAccelerometerRunning = false
+        // 委托采集层停止 CoreMotion，并清除采集器内部运行标记
+        accelerometer.stop()
     }
     
-    // =====================================================================
-    // 自适应步伐检测算法
-    // =====================================================================
-    
-    // 每个加速度计采样到达时调用
-    // 实现双阈值迟滞状态机 + EMA 动态阈值
-    private func checkForStep(data: CMAccelerometerData) {
-        
-        // 计算合加速度（magnitude）
-        // 它表示三个方向加速度的总和
-        // 不管手机怎么放，合加速度都只反映"总加速度的大小"
-        // 静止时始终 ≈ 1.0（因为重力），走路时 > 1.0
-        let x = data.acceleration.x
-        let y = data.acceleration.y
-        let z = data.acceleration.z
-        let magnitude = sqrt(x * x + y * y + z * z)
-        
-        // 双阈值迟滞状态机
-        switch peakState {
-            
-        case .waitingPeak:
-            // 等待信号升至上阈值（TH_HIGH）
-            // 合加速度超过 thresholdHigh → 进入 peakTracking 状态
-            if magnitude > thresholdHigh {
-                peakState = .peakTracking
-                trackingMaxDev = magnitude - gravityBaseline
-            }
-            
-        case .peakTracking:
-            // 正在追踪波峰，持续记录最大偏差
-            let currentDev = magnitude - gravityBaseline
-            if currentDev > trackingMaxDev {
-                trackingMaxDev = currentDev
-            }
-            
-            // 信号回落至下阈值（TH_LOW）以下 → 确认一个完整的波峰
-            // trackingMaxDev 就是这次波峰的峰值偏差
-            if magnitude < thresholdLow {
-                confirmPeak(peakDeviation: trackingMaxDev)
-                peakState = .waitingPeak
-            }
-        }
-        
-        // 静止衰减：长时间没有确认波峰 → 缓慢降低 EMA
-        // 防止高强度走路后突然放慢导致阈值过高，新的轻步伐无法被检测到
-        checkDecay()
+    // 接收采集层计算好的合加速度，并在确认一步后触发模式分发
+    private func handleAccelerationMagnitude(_ magnitude: Double, at timestamp: Date) {
+        // 没有确认有效步伐时保持安静，等待后续采样
+        guard stepDetector.process(magnitude: magnitude, at: timestamp) else { return }
+        // 确认有效步伐后，根据当前模式交给对应子模块处理
+        dispatchConfirmedStep()
     }
     
-    // 波峰确认后的处理：更新 EMA、检查步间隔、分发步伐事件
-    private func confirmPeak(peakDeviation: Double) {
-        let now = Date()
-        
-        // 更新波峰偏差 EMA：追踪近期步伐的平均强度
-        // EMA 公式：ema = α × 新值 + (1−α) × 旧值
-        peakDevEma = emaAlpha * peakDeviation + (1 - emaAlpha) * peakDevEma
-        
-        // 记录波峰确认时间（用于静止衰减判断）
-        lastPeakConfirmTime = now
-        
-        // 最小步间隔检查（防抖）
-        // 如果距上一步时间太短，这个波峰是同一步的弹跳而非新步伐
-        let interval = now.timeIntervalSince(lastStepTime)
-        guard interval > effectiveMinStepInterval else { return }
-        
-        // 更新步间隔 EMA（仅在合理范围内更新，防止停顿期间的超长间隔污染 EMA）
-        if interval > minAbsoluteInterval && interval < 2.0 {
-            intervalEma = emaAlpha * interval + (1 - emaAlpha) * intervalEma
-        }
-        
-        // 记录这一步的时间
-        lastStepTime = now
-        
+    // 根据当前模式分发步伐事件
+    private func dispatchConfirmedStep() {
         // 根据当前模式分发步伐事件
         switch currentMode {
             
@@ -617,79 +338,5 @@ class GaitPipeline: ObservableObject {
             // FeedbackPipeline 会据此决定是否播报倒数数字
             onStepDetected?()
         }
-    }
-    
-    // 静止衰减：防止高阈值锁死
-    // 场景：用户快走（EMA 升高 → 阈值升高）→ 突然慢走或停下
-    //   如果 EMA 不衰减，阈值会卡在高位，轻步伐永远达不到阈值
-    //   → EMA 永远不更新 → 系统锁死
-    // 衰减机制打破这个死锁：超时后将 EMA 缓慢向默认值靠拢
-    private func checkDecay() {
-        let timeSinceLastPeak = Date().timeIntervalSince(lastPeakConfirmTime)
-        // 超过静止超时且 EMA 仍高于默认值 → 逐步衰减
-        // 每个采样周期衰减 0.2%（与 EMA α = 0.2 对应的每采样微调）
-        // 在 20Hz 采样率下：
-        //   1 秒后（20 采样）：0.998^20 = 0.961 → 衰减 4%
-        //   5 秒后（100 采样）：0.998^100 = 0.819 → 衰减 18%
-        //   足够缓慢，不会在短暂停顿时破坏已收敛的 EMA
-        if timeSinceLastPeak > decayTimeout && peakDevEma > defaultPeakDevEma {
-            peakDevEma = max(peakDevEma * 0.998, defaultPeakDevEma)
-        }
-    }
-    
-    // 重置状态机
-    // 在模式切换时调用，避免上一个模式的残留状态影响新模式
-    private func resetDetectionState() {
-        peakState = .waitingPeak
-        trackingMaxDev = 0
-        lastStepTime = .distantPast
-        lastPeakConfirmTime = .distantPast
-    }
-    
-    // =====================================================================
-    // [实验] 距离日志控制方法（实验结束后删除）
-    // =====================================================================
-    
-    // 从当前检测列表中找到最近的物体，记录一条距离日志
-    // 返回记录成功与否（没有可用检测时返回 false）
-    @discardableResult
-    func logDistance(from detections: [Detection]) -> Bool {
-        // 找到有距离信息的最近物体
-        guard let nearest = detections
-            .filter({ $0.distance != nil })
-            .min(by: { $0.distance! < $1.distance! }),
-              let distance = nearest.distance
-        else { return false }
-        
-        let entry = DistanceLogEntry(
-            trialID: distanceLog.count + 1,
-            estimatedDistance: distance,
-            objectLabel: nearest.label,
-            timestamp: Date()
-        )
-        distanceLog.append(entry)
-        distanceLogCount = distanceLog.count
-        return true
-    }
-    
-    // 导出距离日志为 CSV 字符串
-    // target_distance 留空，实验后在 CSV 中手动填入真实距离
-    func exportDistanceLogCSV() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        var csv = "trial_id,target_distance,estimated_distance,object_label,timestamp\n"
-        for entry in distanceLog {
-            let ts = formatter.string(from: entry.timestamp)
-            let line = "\(entry.trialID),,\(String(format: "%.4f", entry.estimatedDistance)),\(entry.objectLabel),\(ts)"
-            csv += line + "\n"
-        }
-        return csv
-    }
-    
-    // 清空距离日志
-    func clearDistanceLog() {
-        distanceLog.removeAll()
-        distanceLogCount = 0
     }
 }
