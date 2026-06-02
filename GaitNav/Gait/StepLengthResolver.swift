@@ -51,14 +51,19 @@ final class StepLengthResolver {
     //   2. 标定步长（本次或历史）
     //   3. 默认步长
     var effectiveStepLength: Float {
+        // 没有标定步长时固定使用默认值，确保 baseline 模式不会读取动态估算结果
+        // 先确认用户已经完成标定，只有完整 gait-adaptive 模式才允许动态修正
+        guard let calibrated = calibrator.effectiveStepLength else {
+            // 未标定时始终返回 0.65 米默认步长，形成固定步长 baseline
+            return defaultStepLength
+        }
         // 检查动态步长是否有效（有值 + 未超时）
         if let dynamic = dynamicEstimator.currentStepLength,
            dynamicEstimator.isActive {
             return dynamic
         }
-        // 动态步长无效，回退到标定值
-        // 都没有则使用默认值
-        return calibrator.effectiveStepLength ?? defaultStepLength
+        // 已标定但动态结果不可用时回退到用户的个性化标定步长
+        return calibrated
     }
     
     // 稳定引导步长：用于保持倒数前的语音距离一致。
@@ -70,6 +75,12 @@ final class StepLengthResolver {
     
     // 当前有效步长的来源，供设置页展示三级优先级
     var stepLengthSource: Source {
+        // 没有标定结果时固定展示默认来源，避免残留动态值让界面误报 gait-adaptive 状态
+        // 先确认完整 gait-adaptive 模式已经通过标定启用
+        guard calibrator.effectiveStepLength != nil else {
+            // 未标定时始终展示默认步长来源
+            return .defaultValue
+        }
         // 有活跃动态步长时优先展示动态来源
         if let _ = dynamicEstimator.currentStepLength,
            dynamicEstimator.isActive {
@@ -85,8 +96,8 @@ final class StepLengthResolver {
     
     // 动态步长当前是否处于活跃状态
     var isDynamicActive: Bool {
-        // 直接转发动态估算器的超时判断，确保所有调用方使用同一规则
-        return dynamicEstimator.isActive
+        // 只有完成标定并且动态结果未超时时才向界面报告活跃状态
+        return calibrator.effectiveStepLength != nil && dynamicEstimator.isActive
     }
     
     // 距离 → 步数转换

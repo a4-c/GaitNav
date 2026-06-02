@@ -71,6 +71,19 @@ final class StepLengthResolverTests: XCTestCase {
         XCTAssertEqual(resolver.stepLengthSource, .dynamic)
     }
     
+    // 没有标定结果时，即使存在残留动态值也应固定使用默认步长
+    func testEffectiveStepLength_withoutCalibration_ignoresDynamicValue() {
+        // 模拟清空标定结果前已经积累出 0.92 米动态步长
+        dynamicEstimator._setForTesting(stepLength: 0.92)
+        
+        // 未标定状态必须固定返回 0.65 米默认步长，形成真正的 baseline
+        XCTAssertEqual(resolver.effectiveStepLength, 0.65, accuracy: 0.0001)
+        // 来源标识也必须保持默认值，避免界面误报动态模式
+        XCTAssertEqual(resolver.stepLengthSource, .defaultValue)
+        // 对外活跃状态必须为 false，避免未标定状态显示动态步长标记
+        XCTAssertFalse(resolver.isDynamicActive)
+    }
+    
     // 稳定步长应忽略动态值，继续使用标定结果
     func testStableStepLength_withDynamicValue_ignoresDynamic() {
         // 写入可用于稳定引导的标定值

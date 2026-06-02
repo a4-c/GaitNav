@@ -65,6 +65,28 @@ final class GaitCoordinatorTests: XCTestCase {
         XCTAssertTrue(gaitCoordinator.hasEverCalibrated)
     }
     
+    // 协调器清空标定结果后，应立即恢复固定默认步长 baseline
+    func testClearCalibratedStepLength_restoresFixedDefaultBaseline() {
+        // 模拟用户之前已经完成标定并保存 0.80 米步长
+        UserDefaults.standard.set(Float(0.80), forKey: "calibratedStepLength")
+        // 清空操作前应读取个性化标定步长
+        XCTAssertEqual(gaitCoordinator.effectiveStepLength, 0.80, accuracy: 0.0001)
+        
+        // 通过设置页使用的协调器入口清空标定和动态步长状态
+        gaitCoordinator.clearCalibratedStepLength()
+        
+        // 清空后应立即固定返回 0.65 米默认步长
+        XCTAssertEqual(gaitCoordinator.effectiveStepLength, 0.65, accuracy: 0.0001)
+        // 稳定引导路径也应同步返回 0.65 米默认步长
+        XCTAssertEqual(gaitCoordinator.stableStepLength, 0.65, accuracy: 0.0001)
+        // 来源标识应同步恢复为默认值
+        XCTAssertEqual(gaitCoordinator.stepLengthSource, .defaultValue)
+        // 持久化标定状态应同步恢复为未完成
+        XCTAssertFalse(gaitCoordinator.hasEverCalibrated)
+        // 动态步长状态应同步停用
+        XCTAssertFalse(gaitCoordinator.isDynamicActive)
+    }
+    
     // 协调器应通过窄接口向 feedback 和 overlay 提供一致的距离换算能力
     func testStepDistanceConvertingFacade_forwardsConversions() {
         // 使用协议类型持有协调器，验证调用方不需要知道具体实现

@@ -43,6 +43,34 @@ final class CalibratorTests: XCTestCase {
         XCTAssertFalse(calibrator.hasEverCalibrated)
     }
     
+    // 清空标定结果时，应同时删除持久化数据并重置界面状态
+    func testClearCalibratedStepLength_removesSavedResultAndResetsState() {
+        // 模拟用户之前已经完成标定并保存 0.80 米步长
+        UserDefaults.standard.set(Float(0.80), forKey: "calibratedStepLength")
+        // 模拟界面中仍然保留上一次标定产生的步长
+        calibrator.calibratedStepLength = 0.80
+        // 模拟界面中仍然保留上一次标定产生的距离
+        calibrator.calibrationDistance = 8.00
+        // 模拟界面中仍然保留上一次标定产生的步数
+        calibrator.calibrationSteps = 10
+        
+        // 执行设置页会触发的清空操作
+        calibrator.clearCalibratedStepLength()
+        
+        // 持久化标定结果应已经删除
+        XCTAssertNil(calibrator.effectiveStepLength)
+        // 标定状态应恢复为从未完成标定
+        XCTAssertFalse(calibrator.hasEverCalibrated)
+        // 内存中的步长应同步清空
+        XCTAssertNil(calibrator.calibratedStepLength)
+        // 内存中的距离应同步清空
+        XCTAssertNil(calibrator.calibrationDistance)
+        // 内存中的步数应同步归零
+        XCTAssertEqual(calibrator.calibrationSteps, 0)
+        // 状态提示应明确说明已经回退到默认步长
+        XCTAssertEqual(calibrator.statusMessage, "Calibration cleared. Using default: 0.65m")
+    }
+    
     // MARK: - handleStep 计数
     
     // 标定状态下，handleStep 应递增步数

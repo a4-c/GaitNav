@@ -84,6 +84,20 @@ class Calibrator: ObservableObject {
         // 更新界面上的步数显示
         statusMessage = "\(calibrationSteps) steps..."
     }
+
+    // 清除已经保存的标定步长，让后续稳定步长计算回退到默认值
+    func clearCalibratedStepLength() {
+        // 从 UserDefaults 中删除持久化的标定步长，避免下次启动 app 时重新加载旧值
+        UserDefaults.standard.removeObject(forKey: stepLengthKey)
+        // 同步清除内存中的标定步长，让设置页立刻刷新为未标定状态
+        calibratedStepLength = nil
+        // 同步清除上一次标定距离，避免界面继续保留已经失效的标定结果
+        calibrationDistance = nil
+        // 同步清除上一次标定步数，确保下一次打开标定页时不展示旧进度
+        calibrationSteps = 0
+        // 更新状态提示，明确告知用户当前稳定步长已经回退到默认值
+        statusMessage = "Calibration cleared. Using default: 0.65m"
+    }
     
     // 用户点击 CalibrationView 上的 "Start" 按钮时调用
     func startCalibration() {

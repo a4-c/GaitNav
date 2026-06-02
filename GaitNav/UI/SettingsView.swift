@@ -210,7 +210,7 @@ struct SettingsView: View {
                                         icon: "bolt.fill",
                                         color: Theme.safe,
                                         title: "Dynamic",
-                                        desc: "Real-time measurement while walking",
+                                        desc: "Real-time refinement after calibration", // 明确说明动态步长只会在完成标定后启用
                                         isActive: gaitCoordinator.stepLengthSource == .dynamic
                                     )
                                     
@@ -228,7 +228,7 @@ struct SettingsView: View {
                                         icon: "ruler",
                                         color: Theme.textDisabled,
                                         title: "Default",
-                                        desc: "0.65 m/step (population average)",
+                                        desc: "0.65 m/step (fixed baseline)", // 明确说明未标定状态会全程固定使用默认步长
                                         isActive: gaitCoordinator.stepLengthSource == .defaultValue
                                     )
                                 }
@@ -253,6 +253,30 @@ struct SettingsView: View {
                                             .stroke(Theme.accent.opacity(0.25), lineWidth: 1)
                                     )
                                 }
+                                
+                                // 清空标定步长按钮：只删除步长标定结果，不影响步态分析参数或其他实验设置
+                                // 点击按钮后立即执行清空操作，让设置页直接回退到未标定状态
+                                Button(action: {
+                                    gaitCoordinator.clearCalibratedStepLength()
+                                }) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 14, weight: .medium))
+                                        Text("Clear Calibrated Step Length")
+                                            .font(.system(size: 15, weight: .semibold))
+                                    }
+                                    .foregroundColor(Theme.danger)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .background(Theme.danger.opacity(0.12))
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium)
+                                            .stroke(Theme.danger.opacity(0.25), lineWidth: 1)
+                                    )
+                                }
+                                .disabled(!gaitCoordinator.hasEverCalibrated)
+                                .opacity(gaitCoordinator.hasEverCalibrated ? 1.0 : 0.45)
                             }
                         }
                         

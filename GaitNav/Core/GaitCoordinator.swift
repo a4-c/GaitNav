@@ -188,6 +188,14 @@ class GaitCoordinator: ObservableObject, StepDistanceConverting {
         calibrator.hasEverCalibrated
     }
     
+    // 清除已经保存的标定步长，并同步停用依赖标定结果的动态步长估算
+    func clearCalibratedStepLength() {
+        // 删除持久化标定结果并同步清空 Calibrator 的界面状态
+        calibrator.clearCalibratedStepLength()
+        // 清除已经积累的动态步长，确保 baseline 立即恢复为固定 0.65 米默认值
+        dynamicEstimator.reset()
+    }
+    
     // 用户是否曾经成功做过步态分析
     // SettingsView 用它来决定按钮文案是 "Re-profile" 还是 "Profile Now"
     var hasEverProfiled: Bool {
@@ -330,11 +338,17 @@ class GaitCoordinator: ObservableObject, StepDistanceConverting {
             calibrator.handleStep()
             
         case .live:
-            // 动态模式：步伐由 DynamicStepEstimator 处理
-            dynamicEstimator.handleStep()
-            // 动态步长更新后，通知 SwiftUI 刷新界面
-            // 因为 effectiveStepLength 可能变了
-            objectWillChange.send()
+            // 只有完成标定后才收集动态步长，让默认模式保持固定 0.65 米 baseline
+            // 标定结果存在时才启用完整 gait-adaptive 管线
+            if calibrator.effectiveStepLength != nil {
+                // 动态模式：步伐由 DynamicStepEstimator 处理
+                // 将当前确认步伐交给动态估算器，用于近场实时修正
+                dynamicEstimator.handleStep()
+                // 动态步长更新后，通知 SwiftUI 刷新界面
+                // 因为 effectiveStepLength 可能变了
+                // 动态值变化后刷新步长展示和来源标签
+                objectWillChange.send()
+            } // 结束已标定状态下的动态步长采集
             // 通知 FeedbackEngine：用户走了一步
             // FeedbackEngine 会据此决定是否播报倒数数字
             onStepDetected?()
