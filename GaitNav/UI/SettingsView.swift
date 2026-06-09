@@ -1,6 +1,4 @@
 import SwiftUI
-// [实验] UIPasteboard 用于复制 CSV 到剪贴板，实验结束后删除
-import UIKit
 
 // 设置页面
 //
@@ -21,12 +19,6 @@ struct SettingsView: View {
     
     // 请求打开步态分析页面的回调
     var onProfileRequested: () -> Void
-    
-    // [实验] PerceptionPipeline 引用，性能日志实验用，实验结束后删除
-    @ObservedObject var perceptionPipeline: PerceptionPipeline
-    
-    // [实验] 性能日志的提示状态，实验结束后删除
-    @State private var showPerfCopiedConfirmation = false
     
     var body: some View {
         ZStack {
@@ -293,131 +285,6 @@ struct SettingsView: View {
                                 aboutRow(title: "Depth Sensor", value: "LiDAR")
                                 Divider().background(Theme.divider)
                                 aboutRow(title: "Positioning", value: "ARKit 6DoF")
-                            }
-                        }
-                        
-                        // =================================================
-                        // [实验] 性能日志调试区（实验结束后删除整个 section）
-                        // =================================================
-                        
-                        settingsSection(title: "Perf Logging (Debug)") {
-                            VStack(spacing: 14) {
-                                // 状态指示 + 帧计数
-                                HStack {
-                                    Circle()
-                                        .fill(perceptionPipeline.isPerfLogging ? Theme.danger : Theme.textDisabled)
-                                        .frame(width: 8, height: 8)
-                                    Text(perceptionPipeline.isPerfLogging ? "Recording..." : "Idle")
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundColor(perceptionPipeline.isPerfLogging ? Theme.danger : Theme.textSecondary)
-                                    Spacer()
-                                    Text("\(perceptionPipeline.perfLogCount) frames")
-                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                        .foregroundColor(Theme.textSecondary)
-                                }
-                                
-                                // 场景选择器（S1–S6）
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Scenario")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(Theme.textSecondary)
-                                    Picker("Scenario", selection: $perceptionPipeline.currentScenario) {
-                                        Text("S1").tag("S1")
-                                        Text("S2").tag("S2")
-                                        Text("S3").tag("S3")
-                                        Text("S4").tag("S4")
-                                        Text("S5").tag("S5")
-                                        Text("S6").tag("S6")
-                                    }
-                                    .pickerStyle(.segmented)
-                                }
-                                
-                                // 复制成功提示
-                                if showPerfCopiedConfirmation {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 12))
-                                        Text("CSV copied to clipboard")
-                                            .font(.system(size: 12, weight: .medium))
-                                    }
-                                    .foregroundColor(Theme.safe)
-                                    .transition(.opacity)
-                                }
-                                
-                                // 三个操作按钮
-                                HStack(spacing: 10) {
-                                    // Start Perf Log 按钮
-                                    Button(action: {
-                                        perceptionPipeline.startPerfLogging()
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "record.circle")
-                                                .font(.system(size: 12, weight: .bold))
-                                            Text("Start")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        .foregroundColor(perceptionPipeline.isPerfLogging ? Theme.textDisabled : Theme.safe)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
-                                        .background(perceptionPipeline.isPerfLogging ? Theme.backgroundElevated : Theme.safe.opacity(0.12))
-                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(perceptionPipeline.isPerfLogging ? Theme.border : Theme.safe.opacity(0.25), lineWidth: 1)
-                                        )
-                                    }
-                                    .disabled(perceptionPipeline.isPerfLogging)
-                                    
-                                    // Stop & Copy 按钮
-                                    Button(action: {
-                                        let csv = perceptionPipeline.stopPerfLoggingAndExportCSV()
-                                        UIPasteboard.general.string = csv
-                                        withAnimation { showPerfCopiedConfirmation = true }
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                            withAnimation { showPerfCopiedConfirmation = false }
-                                        }
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "stop.circle")
-                                                .font(.system(size: 12, weight: .bold))
-                                            Text("Stop & Copy")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        .foregroundColor(!perceptionPipeline.isPerfLogging ? Theme.textDisabled : Theme.warning)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
-                                        .background(!perceptionPipeline.isPerfLogging ? Theme.backgroundElevated : Theme.warning.opacity(0.12))
-                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(!perceptionPipeline.isPerfLogging ? Theme.border : Theme.warning.opacity(0.25), lineWidth: 1)
-                                        )
-                                    }
-                                    .disabled(!perceptionPipeline.isPerfLogging)
-                                    
-                                    // Clear 按钮
-                                    Button(action: {
-                                        perceptionPipeline.clearPerfLog()
-                                        showPerfCopiedConfirmation = false
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "trash")
-                                                .font(.system(size: 12, weight: .bold))
-                                            Text("Clear")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        .foregroundColor(perceptionPipeline.perfLogCount == 0 ? Theme.textDisabled : Theme.textSecondary)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
-                                        .background(Theme.backgroundElevated)
-                                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall)
-                                                .stroke(Theme.border, lineWidth: 1)
-                                        )
-                                    }
-                                    .disabled(perceptionPipeline.perfLogCount == 0)
-                                }
                             }
                         }
                     }

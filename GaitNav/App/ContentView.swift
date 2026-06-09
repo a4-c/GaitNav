@@ -138,8 +138,7 @@ struct ContentView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                         showGaitProfiler = true
                     }
-                },
-                perceptionPipeline: perceptionPipeline      // [实验] 性能日志实验用，实验结束后删除
+                }
             )
             .onAppear {
                 speech.stop()

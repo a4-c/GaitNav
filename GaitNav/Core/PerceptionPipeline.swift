@@ -18,6 +18,10 @@ class PerceptionPipeline: NSObject, ObservableObject {
     // ARFrame 里包含：摄像头画面 + 深度图 + 设备在空间中的位置和朝向
     let session = ARSession()
     
+    // 专门处理 ARSession 帧回调的串行队列
+    // ARKit 会把 session(_:didUpdate:) 投递到这条后台队列，避免 Vision 推理阻塞主线程
+    private let frameProcessingQueue = DispatchQueue(label: "com.gaitnav.perception.frameProcessing", qos: .userInitiated)
+    
     // 检测结果数组，现在每个结果里可能带有距离信息
     // @Published 表示这个属性变化时，SwiftUI 界面会自动刷新
     // 每次检测完成，新的结果会写入这里，界面上的框就会更新
@@ -25,6 +29,7 @@ class PerceptionPipeline: NSObject, ObservableObject {
     
     // 检测器（延迟加载，避免阻塞主线程）
     // ML 模型加载耗时较长，放到 start() 中在后台线程初始化
+    // 加载完成后的赋值也回到 frameProcessingQueue，确保帧回调读取 detector 时没有跨队列竞争
     private var detector: Detector?
     
     // 距离估算器：利用 LiDAR 深度图计算物体到相机的水平距离
@@ -34,6 +39,7 @@ class PerceptionPipeline: NSObject, ObservableObject {
     private let tracker = ObjectTracker()
     
     // 标记当前是否正在处理一帧，避免堆积
+    // 这个标志只在 frameProcessingQueue 上读写，避免主线程和后台队列同时访问
     private var isProcessing = false
     
     // @Published：值变化时自动通知 SwiftUI 刷新界面，这样 ContentView 里的 FPS 显示会实时更新
@@ -45,36 +51,6 @@ class PerceptionPipeline: NSObject, ObservableObject {
     // Date() 表示"现在这一刻"
     private var lastFPSUpdate = Date()
     
-    // =====================================================================
-    // [实验] 逐帧性能日志（Real-time Performance 实验用）
-    // 记录每帧的检测延迟、FPS、物体数量，实验结束后删除
-    // =====================================================================
-    
-    // 单条逐帧性能记录
-    struct PerfLogEntry {
-        let frameID: Int              // 帧编号（从 1 开始）
-        let scenario: String          // 当前场景编号（S1–S6）
-        let timestamp: Date           // 帧处理完成时刻
-        let detectionLatencyMs: Double // 端到端检测延迟（毫秒）
-        let fps: Double               // 当前 FPS 读数
-        let objectCount: Int          // 该帧检测到的物体数量
-    }
-    
-    // 性能日志数组
-    private(set) var perfLog: [PerfLogEntry] = []
-    
-    // 是否正在记录性能数据（@Published 驱动 UI 状态指示）
-    @Published var isPerfLogging = false
-    
-    // 已记录的帧数（@Published 驱动 UI 实时显示计数）
-    @Published var perfLogCount: Int = 0
-    
-    // 当前场景编号，由实验者在 SettingsView 中手动选择
-    @Published var currentScenario: String = "S1"
-    
-    // 当前帧开始处理的时刻（用于计算该帧的端到端延迟）
-    private var frameStartTime: Date?
-    
     // 启动 AR 会话，由外部在界面准备好后调用
     func start() {
         // 1. 先启动 AR 会话（非阻塞，摄像头很快就能出画面）
@@ -82,10 +58,13 @@ class PerceptionPipeline: NSObject, ObservableObject {
         
         // 2. 在后台线程加载 ML 检测模型（耗时操作）
         //    加载完成前，帧回调会跳过检测步骤
-        //    加载完成后，检测自动开始，FPS 更新，加载页面消失
+        //    加载完成后，把 detector 存回帧处理队列，后续检测自动开始
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // 创建 Detector 会同步加载 Core ML / Vision 模型，因此不能放在主线程
             let loadedDetector = Detector()
-            DispatchQueue.main.async {
+            // detector 由 AR 帧回调读取，所以赋值也切回同一条串行帧处理队列
+            self?.frameProcessingQueue.async {
+                // 保存加载好的检测器，下一次帧回调即可进入推理流程
                 self?.detector = loadedDetector
             }
         }
@@ -116,6 +95,8 @@ class PerceptionPipeline: NSObject, ObservableObject {
         // delegate 是"代理"模式
         // 意思是：ARSession 每产出一帧数据，就通知我（self）
         // 具体来说，它会调用我们下面 extension 里写的 session(_:didUpdate:) 方法
+        // delegateQueue 指定帧回调进入后台串行队列，而不是默认主队列
+        session.delegateQueue = frameProcessingQueue
         session.delegate = self
         
         // 用指定的配置启动 AR 会话
@@ -141,9 +122,6 @@ extension PerceptionPipeline: ARSessionDelegate {
         
         // 标记为正在处理
         isProcessing = true
-        
-        // [实验] 记录该帧开始处理的时刻
-        frameStartTime = Date()
         
         // 从 ARFrame 中取出摄像头画面
         // capturedImage 拿到的是 CVPixelBuffer
@@ -217,25 +195,13 @@ extension PerceptionPipeline: ARSessionDelegate {
                 // 只包含 age >= minAgeToShow 的物体（新出现的前几帧不显示，防止闪烁）
                 self.detections = self.tracker.stableDetections
                 
-                // 标记为处理完毕，可以接收下一帧
-                self.isProcessing = false
-                
                 // 更新帧率统计
                 self.updateFPS()
                 
-                // [实验] 记录该帧的性能数据
-                if self.isPerfLogging, let startTime = self.frameStartTime {
-                    let latencyMs = Date().timeIntervalSince(startTime) * 1000.0
-                    let entry = PerfLogEntry(
-                        frameID: self.perfLog.count + 1,
-                        scenario: self.currentScenario,
-                        timestamp: Date(),
-                        detectionLatencyMs: latencyMs,
-                        fps: self.fps,
-                        objectCount: self.detections.count
-                    )
-                    self.perfLog.append(entry)
-                    self.perfLogCount = self.perfLog.count
+                // 主线程已经完成追踪、发布和性能记录后，再回到帧处理队列解除忙碌状态
+                self.frameProcessingQueue.async {
+                    // isProcessing 只在 frameProcessingQueue 上读写，避免跨线程竞争
+                    self.isProcessing = false
                 }
             }
         }
@@ -252,37 +218,5 @@ extension PerceptionPipeline: ARSessionDelegate {
             frameCount = 0
             lastFPSUpdate = now
         }
-    }
-    
-    // =====================================================================
-    // [实验] 性能日志控制方法（实验结束后删除）
-    // =====================================================================
-    
-    // 开始记录逐帧性能数据
-    func startPerfLogging() {
-        isPerfLogging = true
-    }
-    
-    // 停止记录并导出 CSV 字符串
-    func stopPerfLoggingAndExportCSV() -> String {
-        isPerfLogging = false
-        
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        var csv = "frame_id,scenario,timestamp,detection_latency_ms,fps,object_count\n"
-        for entry in perfLog {
-            let ts = formatter.string(from: entry.timestamp)
-            let line = "\(entry.frameID),\(entry.scenario),\(ts),\(String(format: "%.2f", entry.detectionLatencyMs)),\(String(format: "%.1f", entry.fps)),\(entry.objectCount)"
-            csv += line + "\n"
-        }
-        return csv
-    }
-    
-    // 清空性能日志
-    func clearPerfLog() {
-        perfLog.removeAll()
-        perfLogCount = 0
-        isPerfLogging = false
     }
 }
