@@ -73,17 +73,14 @@ struct AdaptiveStepDetector {
     // 代表"用户近期步伐的平均周期"
     private var intervalEma: TimeInterval
     
-    // 上一次成功检测到步伐的时间
-    // 用于计算步间隔和防抖
+    // 上一次通过防抖并被接受为有效步伐的时间
+    // 同时用于计算步间隔、防抖和静止衰减
     // .distantPast 代表一个极其遥远的过去时间
     //   这样第一步检测时：
     //     now.timeIntervalSince(.distantPast) = 一个巨大的正数
     //     肯定 > 最小步间隔
     //     所以第一步不会被误拦
-    private var lastStepTime: Date = .distantPast
-    
-    // 上一次确认波峰的时间（用于静止衰减判断）
-    private var lastPeakConfirmTime: Date = .distantPast
+    private var lastAcceptedStepTime: Date = .distantPast
     
     // 初始化检测器，并允许调用方注入 profiling 保存的 EMA
     init(configuration: StepDetectionConfiguration = StepDetectionConfiguration(), profile: StepDetectionProfile? = nil) {
@@ -157,7 +154,7 @@ struct AdaptiveStepDetector {
             }
         }
         
-        // 静止衰减：长时间没有确认波峰 → 缓慢降低 EMA
+        // 静止衰减：长时间没有接受有效步伐 → 缓慢降低 EMA
         // 防止高强度走路后突然放慢导致阈值过高，新的轻步伐无法被检测到
         checkDecay(at: now)
         
@@ -165,28 +162,25 @@ struct AdaptiveStepDetector {
         return didConfirmStep
     }
     
-    // 波峰确认后的处理：更新 EMA、检查步间隔、分发步伐事件
+    // 波峰确认后的处理：先检查步间隔，再只用有效步伐更新 EMA 和时间状态
     private mutating func confirmPeak(peakDeviation: Double, at now: Date) -> Bool {
-        
-        // 更新波峰偏差 EMA：追踪近期步伐的平均强度
-        // EMA 公式：ema = α × 新值 + (1−α) × 旧值
-        peakDevEma = configuration.emaAlpha * peakDeviation + (1 - configuration.emaAlpha) * peakDevEma
-        
-        // 记录波峰确认时间（用于静止衰减判断）
-        lastPeakConfirmTime = now
         
         // 最小步间隔检查（防抖）
         // 如果距上一步时间太短，这个波峰是同一步的弹跳而非新步伐
-        let interval = now.timeIntervalSince(lastStepTime)
+        let interval = now.timeIntervalSince(lastAcceptedStepTime)
         guard interval > effectiveMinStepInterval else { return false }
+        
+        // 更新波峰偏差 EMA：只用通过防抖的有效步伐来追踪近期步伐的平均强度
+        // EMA 公式：ema = α × 新值 + (1−α) × 旧值
+        peakDevEma = configuration.emaAlpha * peakDeviation + (1 - configuration.emaAlpha) * peakDevEma
         
         // 更新步间隔 EMA（仅在合理范围内更新，防止停顿期间的超长间隔污染 EMA）
         if interval > configuration.minAbsoluteInterval && interval < 2.0 {
             intervalEma = configuration.emaAlpha * interval + (1 - configuration.emaAlpha) * intervalEma
         }
         
-        // 记录这一步的时间
-        lastStepTime = now
+        // 记录这次通过防抖的有效步伐时间，供下一次防抖和静止衰减共同使用
+        lastAcceptedStepTime = now
         
         // 返回 true，通知 GaitCoordinator 分发本次确认步伐
         return true
@@ -199,14 +193,14 @@ struct AdaptiveStepDetector {
     // 衰减机制打破这个死锁：超时后将 EMA 缓慢向默认值靠拢
     private mutating func checkDecay(at now: Date) {
         // 使用传入的采样时间计算静止时长，保证算法可以被确定性测试
-        let timeSinceLastPeak = now.timeIntervalSince(lastPeakConfirmTime)
+        let timeSinceLastAcceptedStep = now.timeIntervalSince(lastAcceptedStepTime)
         // 超过静止超时且 EMA 仍高于默认值 → 逐步衰减
         // 每个采样周期衰减 0.2%（与 EMA α = 0.2 对应的每采样微调）
         // 在 20Hz 采样率下：
         //   1 秒后（20 采样）：0.998^20 = 0.961 → 衰减 4%
         //   5 秒后（100 采样）：0.998^100 = 0.819 → 衰减 18%
         //   足够缓慢，不会在短暂停顿时破坏已收敛的 EMA
-        if timeSinceLastPeak > configuration.decayTimeout && peakDevEma > configuration.defaultPeakDevEma {
+        if timeSinceLastAcceptedStep > configuration.decayTimeout && peakDevEma > configuration.defaultPeakDevEma {
             peakDevEma = max(peakDevEma * 0.998, configuration.defaultPeakDevEma)
         }
     }
@@ -216,8 +210,7 @@ struct AdaptiveStepDetector {
     mutating func resetDetectionState() {
         peakState = .waitingPeak
         trackingMaxDev = 0
-        lastStepTime = .distantPast
-        lastPeakConfirmTime = .distantPast
+        lastAcceptedStepTime = .distantPast
     }
     
     // 应用 profiling 保存的个性化 EMA，并清理上一个模式留下的瞬时状态
