@@ -181,7 +181,17 @@ class GaitProfiler: ObservableObject {
         // 合理性检查：波峰偏差应在 (0.02, 1.0) 范围内
         //   < 0.02g：接近传感器噪声，几乎不可能是真步伐
         //   > 1.0g：异常高（合加速度 > 2.0g），可能是传感器故障
+        // 任一 EMA 不合理时都拒绝保存，避免出现半套新 profile 和半套旧 profile 混用
         guard peakDevEma > 0.02 && peakDevEma < 1.0 else {
+            statusMessage = "Result unreasonable. Please retry."
+            return
+        }
+        
+        // 合理性检查：步间隔 EMA 应在 (0.2, 2.0) 范围内，保证保存的是完整可信的 profile
+        //   <= 0.2s：步频过快，接近或超过人类真实步频极限，通常说明检测到了重复弹跳
+        //   >= 2.0s：步频过慢，通常说明用户中途停顿或 profiling 期间步伐事件不连续
+        // 任一 EMA 不合理时都拒绝保存，避免出现半套新 profile 和半套旧 profile 混用
+        guard intervalEma > 0.2 && intervalEma < 2.0 else {
             statusMessage = "Result unreasonable. Please retry."
             return
         }
@@ -189,11 +199,10 @@ class GaitProfiler: ObservableObject {
         // 保存到 UserDefaults
         profiledPeakDevEma = peakDevEma
         UserDefaults.standard.set(peakDevEma, forKey: peakDevEmaKey)
-        
-        if intervalEma > 0.2 && intervalEma < 2.0 {
-            profiledIntervalEma = intervalEma
-            UserDefaults.standard.set(intervalEma, forKey: intervalEmaKey)
-        }
+        // 同步保存步间隔 EMA，确保 profile 中的两个自适应参数来自同一次分析
+        profiledIntervalEma = intervalEma
+        // 将步间隔 EMA 写入 UserDefaults，供之后标定模式和 live 模式恢复使用
+        UserDefaults.standard.set(intervalEma, forKey: intervalEmaKey)
         
         // 构造状态信息
         let intervalStr = profiledIntervalEma != nil
