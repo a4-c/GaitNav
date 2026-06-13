@@ -6,7 +6,7 @@ struct FeedbackAnnouncementFormatter {
     // =====================================================================
     // 方位计算
     // =====================================================================
-
+    
     // 把物体在画面中的水平位置转换成时钟方位
     //
     // 映射关系：
@@ -17,14 +17,19 @@ struct FeedbackAnnouncementFormatter {
     //   归一化 x 坐标：
     //     0.0 ──── 0.25 ──────── 0.75 ──── 1.0
     //         11点      12点（正前方）    1点
-    func clockDirection(from boundingBox: CGRect) -> String {
+    // 实际边界从 FeedbackConfiguration 读取，确保方位播报与路径中央判断使用同一套阈值
+    func clockDirection(from boundingBox: CGRect, configuration: FeedbackConfiguration) -> String {
+        // 读取检测框水平中点，用它判断物体位于左前方、正前方还是右前方
         let centerX = boundingBox.midX
         let hour: Int
-        if centerX < 0.25 {
+        if centerX < configuration.centerLowerBound {
+            // 左前方统一播报为 11 点钟
             hour = 11
-        } else if centerX < 0.75 {
+        } else if centerX < configuration.centerUpperBound {
+            // 正前方统一播报为 12 点钟
             hour = 12
         } else {
+            // 超过中央右边界时，物体位于用户右前方区域
             hour = 1
         }
         return "\(hour) o'clock"
@@ -33,7 +38,7 @@ struct FeedbackAnnouncementFormatter {
     // =====================================================================
     // 播报文案生成
     // =====================================================================
-
+    
     // 完整播报：物体名 + 方位 + 步数
     // 用于首次发现物体时，建立用户的空间映射
     // 示例："chair, 12 o'clock, 7 steps"

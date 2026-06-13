@@ -46,10 +46,20 @@ struct FeedbackConfiguration {
     // 过滤配置
     // =====================================================================
     
-    // 侧边判定：boundingBox 水平中心点在这个范围外视为"侧边"
-    // 0.35 ~ 0.65 = 中间 30% 是"行走路径"
-    // 两侧各 35% 是"侧边"
-    let sideMargin: CGFloat = 0.35
+    // 侧边判定：boundingBox 水平中心点在这个范围外视为侧边
+    // 左右边界各保留 25%，中间 50% 视为用户当前行走路径
+    // 当前将行走路径中央范围统一为 0.25~0.75，与 12 点钟方位范围保持一致
+    let sideMargin: CGFloat = 0.25
+    
+    // 中央区域左边界：复用 sideMargin
+    var centerLowerBound: CGFloat {
+        sideMargin
+    }
+    
+    // 中央区域右边界：由左侧边缘比例反推，保证左右边界始终对称
+    var centerUpperBound: CGFloat {
+        1.0 - sideMargin
+    }
     
     // 侧边物体超过这个步数就直接忽略
     // 不在行走路线上、又离得远的物体，不值得播报

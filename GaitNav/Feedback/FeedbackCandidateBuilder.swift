@@ -36,9 +36,11 @@ struct FeedbackCandidateBuilder {
                 // 倒数激活后允许现有自适应估计修正近距离反馈。
                 let steps = shouldUseAdaptiveSteps ? adaptiveSteps : stableSteps
                 
-                let direction = formatter.clockDirection(from: detection.boundingBox)
+                // 使用配置里的统一边界生成时钟方位
+                let direction = formatter.clockDirection(from: detection.boundingBox, configuration: configuration)
                 let midX = detection.boundingBox.midX
-                let isCenter = midX >= configuration.sideMargin && midX <= (1.0 - configuration.sideMargin)
+                // 使用同一套配置边界判断是否位于行走路径中央
+                let isCenter = midX >= configuration.centerLowerBound && midX <= configuration.centerUpperBound
                 let isNew = !previousIDs.contains(detection.id)
                 
                 // 过滤：侧边 + 超过 5 步 → 不在行走路线上的远处物体，忽略
