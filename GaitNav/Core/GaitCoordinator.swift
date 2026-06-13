@@ -209,6 +209,14 @@ class GaitCoordinator: ObservableObject, StepDistanceConverting {
         return stepLengthResolver.isDynamicActive
     }
     
+    // 视觉倒数兜底等待时间：使用当前步间隔 EMA 加一个加速度计采样周期作为余量
+    var visualCountdownFallbackDelay: TimeInterval {
+        // 读取步伐检测器当前学习到的步间隔 EMA，让等待窗口跟随用户实际步频变化
+        let currentStepInterval = stepDetector.currentProfile.intervalEma
+        // 在一个步周期后再多等一个采样周期，降低视觉兜底抢在确认步伐前播报的概率
+        return currentStepInterval + stepDetectionConfiguration.accelerometerUpdateInterval
+    }
+    
     // 距离 → 步数转换
     func distanceToSteps(_ distance: Float) -> Int {
         // 委托给步长解析器，继续使用向上取整的安全策略

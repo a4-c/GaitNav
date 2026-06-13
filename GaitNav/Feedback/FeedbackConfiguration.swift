@@ -84,6 +84,7 @@ struct FeedbackConfiguration {
     
     // 如果加速度计漏检了一步，但视觉/LiDAR 步数已经稳定下降，
     // 等待这段时间后用视觉步数兜底播报，避免倒数卡住。
+    // 这个固定值只作为默认兜底；实际导航中优先使用 GaitCoordinator 基于 intervalEma 计算出的动态等待时间。
     let visualCountdownFallbackDelay: TimeInterval = 0.55
     
     // 视觉兜底倒数之间的最短间隔，防止同一段距离抖动连报。

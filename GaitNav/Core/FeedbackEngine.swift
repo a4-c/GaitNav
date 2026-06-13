@@ -63,6 +63,8 @@ class FeedbackEngine {
     private let speech: SpeechManager
     private let configuration = FeedbackConfiguration()
     private let formatter = FeedbackAnnouncementFormatter()
+    // 视觉倒数兜底等待时间提供者：由步态层注入，反馈层只读取结果，不直接依赖步伐检测器
+    private let visualCountdownFallbackDelayProvider: () -> TimeInterval
     private let candidateBuilder = FeedbackCandidateBuilder()
     private let metersPolicy = MetersFeedbackPolicy()
     private let stepsPolicy = StepsFeedbackPolicy()
@@ -78,13 +80,21 @@ class FeedbackEngine {
     var distanceMode: FeedbackDistanceMode
     
     // 初始化反馈引擎，并只接收距离转步数所需的最小接口
-    init(speech: SpeechManager, stepDistanceConverter: StepDistanceConverting, distanceMode: FeedbackDistanceMode = .steps) {
+    // visualCountdownFallbackDelayProvider 用于把 intervalEma 推导出的动态等待窗口传入倒数逻辑
+    init(
+        speech: SpeechManager,
+        stepDistanceConverter: StepDistanceConverting,
+        distanceMode: FeedbackDistanceMode = .steps,
+        visualCountdownFallbackDelayProvider: @escaping () -> TimeInterval = { FeedbackConfiguration().visualCountdownFallbackDelay }
+    ) {
         // 保存语音管理器，供反馈规则触发普通播报或紧急打断播报
         self.speech = speech
         // 保存窄化后的距离转换接口，避免反馈引擎依赖完整步态协调器
         self.stepDistanceConverter = stepDistanceConverter
         // 保存调用方选择的反馈距离模式，决定后续使用步数或米数策略
         self.distanceMode = distanceMode
+        // 保存视觉兜底等待时间提供者，让倒数入口可根据当前步频动态调整等待窗口
+        self.visualCountdownFallbackDelayProvider = visualCountdownFallbackDelayProvider
     }
     
     // 接收最新的检测结果，决定是否需要播报
@@ -268,6 +278,8 @@ class FeedbackEngine {
                 distanceMode: distanceMode,
                 focusState: &focusState,
                 configuration: configuration,
+                // 每次更新时读取最新等待窗口，让视觉兜底随当前步频变化
+                visualCountdownFallbackDelay: visualCountdownFallbackDelayProvider(),
                 formatter: formatter,
                 countdownController: countdownController,
                 speech: speech

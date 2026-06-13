@@ -13,6 +13,8 @@ struct StepsFeedbackPolicy {
         distanceMode: FeedbackDistanceMode,
         focusState: inout FeedbackFocusState,
         configuration: FeedbackConfiguration,
+        // 视觉倒数兜底等待时间由步态层动态计算，避免普通画面帧使用固定延迟
+        visualCountdownFallbackDelay: TimeInterval,
         formatter: FeedbackAnnouncementFormatter,
         countdownController: CountdownController,
         speech: SpeechManager
@@ -49,6 +51,8 @@ struct StepsFeedbackPolicy {
             distanceMode: distanceMode,
             focusState: &focusState,
             configuration: configuration,
+            // 把本帧使用的动态等待时间继续传给倒数控制器
+            visualCountdownFallbackDelay: visualCountdownFallbackDelay,
             speech: speech
         ) {
             return true

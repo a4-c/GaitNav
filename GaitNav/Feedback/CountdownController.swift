@@ -73,6 +73,8 @@ struct CountdownController {
         distanceMode: FeedbackDistanceMode,
         focusState: inout FeedbackFocusState,
         configuration: FeedbackConfiguration,
+        // 动态等待窗口：通常等于当前步间隔 EMA 加一个加速度计采样周期
+        visualCountdownFallbackDelay: TimeInterval,
         speech: SpeechManager
     ) -> Bool {
         
@@ -84,7 +86,8 @@ struct CountdownController {
         
         // confirmed step 路径可以立即进入倒数；
         // 普通画面帧必须先等一小段时间，确认不是步伐事件马上要来了。
-        let canEnterCountdown = isConfirmedStepUpdate || now.timeIntervalSince(focusState.lastConfirmedStepTime) >= configuration.visualCountdownFallbackDelay
+        // 等待时间来自当前步频，而不是固定常数，因此快走和慢走都会得到对应的兜底节奏。
+        let canEnterCountdown = isConfirmedStepUpdate || now.timeIntervalSince(focusState.lastConfirmedStepTime) >= visualCountdownFallbackDelay
         
         // 情况 A：还没正式进入倒数，但视觉步数已经从 6+ 变成 5 或更小。
         // 如果这是 confirmed step 路径，直接说 "5"；
@@ -103,7 +106,8 @@ struct CountdownController {
         // 只有屏幕步数真的降到 4、3、2、1 时才兜底播报。
         guard lastSteps <= configuration.countdownThreshold else { return false }
         guard currentSteps < lastSteps else { return false }
-        guard now.timeIntervalSince(focusState.lastConfirmedStepTime) >= configuration.visualCountdownFallbackDelay else { return false }
+        // 已进入倒数后也复用同一动态等待窗口，避免漏检兜底和下一次真实步伐事件撞车。
+        guard now.timeIntervalSince(focusState.lastConfirmedStepTime) >= visualCountdownFallbackDelay else { return false }
         guard now.timeIntervalSince(focusState.lastAnnouncementTime) >= configuration.visualCountdownMinInterval else { return false }
         
         speakCountdownStep(currentSteps, configuration: configuration, speech: speech)

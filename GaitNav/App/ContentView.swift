@@ -78,7 +78,13 @@ struct ContentView: View {
             gaitCoordinator.start()
             
             // 使用步态协调器提供的窄距离换算接口创建反馈引擎
-            let engine = FeedbackEngine(speech: speech, stepDistanceConverter: gaitCoordinator, distanceMode: feedbackDistanceMode)
+            let engine = FeedbackEngine(
+                speech: speech,
+                stepDistanceConverter: gaitCoordinator,
+                distanceMode: feedbackDistanceMode,
+                // 将当前步频推导出的视觉兜底等待时间注入反馈引擎，避免倒数入口依赖固定 0.55 秒
+                visualCountdownFallbackDelayProvider: { gaitCoordinator.visualCountdownFallbackDelay }
+            )
             // 保存反馈引擎，供后续感知结果和模式切换事件继续调用
             feedbackEngine = engine
             
