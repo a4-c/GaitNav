@@ -32,20 +32,20 @@ struct AdaptiveStepDetector {
     //   这天然防止了信号在阈值附近的小幅抖动造成的重复计数
     //
     //   状态转换：
-    //     waitingPeak -> (偏差 > TH_HIGH) -> peakTracking
-    //     peakTracking -> (偏差 < TH_LOW) -> waitingPeak（确认一步）
-    //     peakTracking 期间持续追踪最大偏差值，用于更新 EMA
+    //     waitingPeak -> (偏差 > TH_HIGH) -> trackingPeak
+    //     trackingPeak -> (偏差 < TH_LOW) -> waitingPeak（确认一步）
+    //     trackingPeak 期间持续追踪最大偏差值，用于更新 EMA
     
     // 状态机的两个状态
     private enum PeakDetectionState {
         case waitingPeak   // 等待信号升至上阈值
-        case peakTracking  // 正在追踪一个波峰，记录最大偏差
+        case trackingPeak  // 正在追踪一个波峰，记录最大偏差
     }
     
     // 当前状态
     private var peakState: PeakDetectionState = .waitingPeak
     
-    // peakTracking 状态下追踪到的最大偏差（重力基线以上的部分）
+    // trackingPeak 状态下追踪到的最大偏差（重力基线以上的部分）
     // 当信号回落至 TH_LOW 以下时，这个值就是本次波峰的确认偏差
     private var trackingMaxDev: Double = 0
     
@@ -102,7 +102,7 @@ struct AdaptiveStepDetector {
     // 动态阈值（从 EMA 实时计算）
     // =====================================================================
     
-    // 上阈值：信号偏差超过此值 → 进入 peakTracking 状态
+    // 上阈值：信号偏差超过此值 → 进入 trackingPeak 状态
     // 由于衰减逻辑保证 peakDevEma ≥ defaultPeakDevEma (0.05)
     // TH_HIGH 最低 = 1.0 + 0.05 × 0.7 = 1.035，不需要额外下限
     private var thresholdHigh: Double {
@@ -133,13 +133,14 @@ struct AdaptiveStepDetector {
             
         case .waitingPeak:
             // 等待信号升至上阈值（TH_HIGH）
-            // 合加速度超过 thresholdHigh → 进入 peakTracking 状态
+            // 合加速度超过 thresholdHigh → 进入 trackingPeak 状态
             if magnitude > thresholdHigh {
-                peakState = .peakTracking
+                // 切换到 trackingPeak，表示后续采样开始追踪本次波峰的最大偏差
+                peakState = .trackingPeak
                 trackingMaxDev = magnitude - configuration.gravityBaseline
             }
             
-        case .peakTracking:
+        case .trackingPeak:
             // 正在追踪波峰，持续记录最大偏差
             let currentDev = magnitude - configuration.gravityBaseline
             if currentDev > trackingMaxDev {
