@@ -1,0 +1,4 @@
+participant,condition_order_first,condition_order_second,order_assignment,calibrated_step_length_m,experiment_date
+P1,baseline,adaptive,fixed,0.45,2026-06-03
+P2,adaptive,baseline,fixed,0.53,2026-06-02
+P3,baseline,adaptive,random (coin flip result: baseline first),0.48,2026-06-09

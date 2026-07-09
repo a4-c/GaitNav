@@ -1,0 +1,11 @@
+participant,condition,Q1_comprehensibility,Q2_spatial_awareness,Q3_actionability,Q4_safety,Q5_information_pacing,Q6_cognitive_load
+P1,steps,7,7,4,5,5,7
+P1,metres,7,4,4,2,5,7
+P2,metres,5,4,5,3,2,3
+P2,steps,6,6,7,6,5,5
+P3,steps,6,5,6,6,4,5
+P3,metres,6,4,4,3,4,3
+P4,metres,5,4,4,4,4,4
+P4,steps,5,5,6,5,4,5
+P5,steps,6,6,7,6,5,5
+P5,metres,4,4,3,3,5,4
