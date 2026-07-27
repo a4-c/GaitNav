@@ -36,7 +36,7 @@ struct FeedbackConfiguration {
     // 距离阈值（米），从远到近排列
     // 用户接近物体时，每跨过一个阈值播报一次简短更新
     // 首报时的完整信息由焦点获取逻辑处理，这里只管后续的阈值更新
-    let meterThresholds: [Float] = [10.0, 5.0, 3.0, 2.0, 1.0]
+    let meterThresholds: [Float] = [5.0, 3.0, 2.0, 1.0]
     
     // 紧急距离（米）
     // 低于此距离 → 播报 "Stop"
