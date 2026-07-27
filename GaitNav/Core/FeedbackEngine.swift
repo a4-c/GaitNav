@@ -66,7 +66,7 @@ class FeedbackEngine {
     // 视觉倒数兜底等待时间提供者：由步态层注入，反馈层只读取结果，不直接依赖步伐检测器
     private let visualCountdownFallbackDelayProvider: () -> TimeInterval
     private let candidateBuilder = FeedbackCandidateBuilder()
-    private let metersPolicy = MetersFeedbackPolicy()
+    private let metresPolicy = MetresFeedbackPolicy()
     private let stepsPolicy = StepsFeedbackPolicy()
     private let countdownController = CountdownController()
     private var focusState = FeedbackFocusState()
@@ -257,7 +257,7 @@ class FeedbackEngine {
             //   只看距离阈值：跨过 10m/5m/3m/2m/1m 时简短更新，< 0.5m 时说 Stop
             //   所有播报由画面帧的距离变化驱动，和用户步伐无关
             if distanceMode == .meters {
-                metersPolicy.updateInMetersMode(
+                metresPolicy.updateInMetersMode(
                     candidate: candidate,
                     direction: candidate.direction,
                     now: now,

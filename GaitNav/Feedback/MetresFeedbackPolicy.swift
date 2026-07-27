@@ -3,7 +3,7 @@ import Foundation
 // =====================================================================
 // 米数模式：聚焦物体更新逻辑
 // =====================================================================
-struct MetersFeedbackPolicy {
+struct MetresFeedbackPolicy {
     
     // 由 update() 第五步在 distanceMode == .meters 时调用
     // 紧急距离 → 方位变化 → 距离阈值
