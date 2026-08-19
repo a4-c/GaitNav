@@ -30,8 +30,8 @@ class DynamicStepEstimator {
     private let windowSize = 6
     
     // 动态步长的有效期（秒）
-    // 如果最后一步离现在超过这个时间，认为用户已经停下来了
-    // 停下来后动态步长不再可信（可能是站着不动的最后几步，不代表正常步态）
+    // 如果最后一次成功计算动态步长离现在超过这个时间，认为动态步长已经过期
+    // 过期后动态步长不再可信（可能是站着不动的最后几步，不代表正常步态）
     // 回退到标定值或默认值
     let timeout: TimeInterval = 3.0
     
@@ -51,6 +51,10 @@ class DynamicStepEstimator {
     // GaitCoordinator 在检测到一步时调用这个方法
     // 记录这一步的 ARKit 位置，和上一步的位置算距离 = 这一步的步长
     func handleStep() {
+        // 记录本次步伐处理的统一时间，避免同一次计算里多次读取系统时间造成细微偏差
+        let now = Date()
+        // 如果当前动态步长已经过期，就复用统一 reset 逻辑清空旧状态
+        resetIfNeeded(now: now)
         
         // 从 ARKit 读取当前位置
         // .currentFrame → ARSession 的属性
@@ -102,7 +106,8 @@ class DynamicStepEstimator {
                     // 除以个数 = 平均值
                     let avg = recentStepLengths.reduce(0, +) / Float(recentStepLengths.count)
                     currentStepLength = avg
-                    lastUpdateTime = Date()
+                    // 只有真正算出新的动态步长时，才刷新动态步长更新时间
+                    lastUpdateTime = now
                 }
             }
         }
@@ -112,12 +117,26 @@ class DynamicStepEstimator {
         lastStepPosition = currentPosition
     }
     
+    // 如果已经产出过的动态步长超过有效期，就清空上一段步行留下的滑动窗口
+    private func resetIfNeeded(now: Date) {
+        // 如果还没有产出过动态步长，说明当前窗口还处在冷启动积累阶段，不应该被 lastUpdateTime 清掉
+        guard currentStepLength != nil else { return }
+        // 如果动态步长还没有超过有效期，继续沿用当前滑动窗口
+        guard now.timeIntervalSince(lastUpdateTime) >= timeout else { return }
+        reset()
+    }
+    
     // 重置所有状态
     // 在模式切换时调用
     func reset() {
+        // 清除停顿前的 ARKit 位置，避免恢复行走的第一步跨越停顿前后的两个位置
         lastStepPosition = nil
+        // 清空停顿前积累的步长样本，确保新的动态平均值只来自恢复后的步伐
         recentStepLengths = []
+        // 作废停顿前计算出的动态步长，让解析器回退到标定值或默认值
         currentStepLength = nil
+        // 重置动态步长刷新时间，确保清理后不会被误判为仍然活跃
+        lastUpdateTime = .distantPast
     }
     
     // For testing
