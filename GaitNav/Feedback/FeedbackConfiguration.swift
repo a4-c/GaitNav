@@ -3,90 +3,63 @@ import CoreGraphics
 
 struct FeedbackConfiguration {
     
-    // =====================================================================
-    // 步数模式阈值 & 倒数配置
-    // =====================================================================
+    // steps mode
     
-    // 远距离阈值：步数 > countdownThreshold 时，只在跨过这些值时播报
-    // 不包含 5，因为 5 是倒数模式的入口，由倒数逻辑处理
+    // far-range thresholds, announce when step count crosses these
     let stepThresholds: [Int] = [12, 9]
     
-    // 倒数模式入口：步数从上方跨过这个值时，进入倒数模式
-    // 进入后只说数字（"5", "4", "3", "2"），每减 1 步报一次
-    // 用户已经从首报知道了"是什么、在哪里"，倒数只需要告诉"还有多远"
+    // countdown starts at this step count
     let countdownThreshold = 5
     
-    // 1 步以内 = 最后一步，倒数模式下使用短促行动提示
+    // <= 1 step = urgent, say Stop (or full warning if not in countdown)
     let urgentStepThreshold = 1
     
-    // 最后一步播报。这里没有路线转向信息，所以使用直接的行动提示 Stop
     let finalCountdownText = "Stop"
     
-    // 动态步长变化造成的估算偏差达到这个步数时，播报一次修正。
+    // correction triggers when expected vs real-time steps differ by this much
     let correctionStepDelta = 2
     
-    // 突然出现的物体在这个步数以内时，才触发紧急首报
-    // 远处新出现的物体不需要紧急打断，等它成为焦点时正常播报就行
+    // new object within this many steps can take over focus
     let suddenAppearanceThreshold = 3
     
-    // =====================================================================
-    // 米数模式阈值
-    // =====================================================================
+    // metres mode
     
-    // 距离阈值（米），从远到近排列
-    // 用户接近物体时，每跨过一个阈值播报一次简短更新
-    // 首报时的完整信息由焦点获取逻辑处理，这里只管后续的阈值更新
+    // announce when distance crosses these (far to near)
     let meterThresholds: [Float] = [5.0, 3.0, 2.0, 1.0]
     
-    // 紧急距离（米）
-    // 低于此距离 → 播报 "Stop"
+    // below this = Stop
     let urgentMeterThreshold: Float = 0.5
     
-    // =====================================================================
-    // 过滤配置
-    // =====================================================================
+    // filtering
     
-    // 侧边判定：boundingBox 水平中心点在这个范围外视为侧边
-    // 左右边界各保留 25%，中间 50% 视为用户当前行走路径
-    // 当前将行走路径中央范围统一为 0.25~0.75，与 12 点钟方位范围保持一致
+    // outside 0.25-0.75 = side object
     let sideMargin: CGFloat = 0.25
     
-    // 中央区域左边界：复用 sideMargin
     var centerLowerBound: CGFloat {
         sideMargin
     }
-    
-    // 中央区域右边界：由左侧边缘比例反推，保证左右边界始终对称
     var centerUpperBound: CGFloat {
         1.0 - sideMargin
     }
     
-    // 侧边物体超过这个步数就直接忽略
-    // 不在行走路线上、又离得远的物体，不值得播报
+    // side objects beyond this step count are ignored
     let sideIgnoreSteps = 5
     
-    // 步数比上次播报增加超过这个值 → 释放焦点
-    // 步数增加说明用户正在远离这个物体（走过了、转向了、或者物体自己移开了）
-    // 释放焦点后，系统会自动选下一个最近的物体
+    // step count increased by more than this since last announcement = user moving away
     let releaseStepIncrease = 3
     
-    // =====================================================================
-    // 防抖
-    // =====================================================================
+    // timing
     
-    // 两次播报之间的最短间隔（远距离模式）
-    // 防止在阈值边界上因为距离抖动而反复触发
+    // far-range: min gap between announcements
     let minAnnouncementInterval: TimeInterval = 1.5
     
-    // 倒数模式下的最短间隔。
-    // 步伐确认已经由 GaitCoordinator 防抖，这里只防同一事件链里的重复播报。
+    // countdown: only prevents duplicate speech from same event chain
     let countdownMinInterval: TimeInterval = 0.25
     
-    // 如果加速度计漏检了一步，但视觉/LiDAR 步数已经稳定下降，
-    // 等待这段时间后用视觉步数兜底播报，避免倒数卡住。
-    // 这个固定值只作为默认兜底；实际导航中优先使用 GaitCoordinator 基于 intervalEma 计算出的动态等待时间。
+    // default fallback delay when step detector misses a step
+    // in practice, GaitCoordinator provides a dynamic value based on intervalEma
     let visualCountdownFallbackDelay: TimeInterval = 0.55
     
-    // 视觉兜底倒数之间的最短间隔，防止同一段距离抖动连报。
+    // min gap between visual fallback announcements
     let visualCountdownMinInterval: TimeInterval = 0.75
 }
