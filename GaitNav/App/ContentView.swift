@@ -1,5 +1,6 @@
 import SwiftUI
 
+// main screen: camera preview + detection overlay + feedback controls
 struct ContentView: View {
     
     @StateObject private var perceptionPipeline = PerceptionPipeline()
@@ -20,27 +21,13 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             
-            // =============================================================
-            // 底层：AR 摄像头画面
-            // =============================================================
-            
             CameraPreview(session: perceptionPipeline.session)
                 .ignoresSafeArea()
             
-            // =============================================================
-            // 中层：检测框叠加层
-            // =============================================================
-            
-            // 叠加层只接收距离换算接口，避免感知完整的步态协调职责
             DetectionOverlay(detections: perceptionPipeline.detections, stepDistanceConverter: gaitCoordinator)
                 .ignoresSafeArea()
             
-            // =============================================================
-            // 上层：导航 HUD（导航开始后才显示）
-            // =============================================================
-            
             if isNavigationStarted && !isPaused {
-                // HUD 顶栏 + 底栏
                 GeometryReader { geo in
                     VStack(spacing: 0) {
                         topBar
@@ -51,7 +38,6 @@ struct ContentView: View {
                 }
                 .transition(.opacity)
                 
-                // 暂停按钮 + 设置按钮
                 VStack {
                     Spacer()
                     Button {
@@ -77,20 +63,16 @@ struct ContentView: View {
             gaitCoordinator.setARSession(perceptionPipeline.session)
             gaitCoordinator.start()
             
-            // 使用步态协调器提供的窄距离换算接口创建反馈引擎
             let engine = FeedbackEngine(
                 speech: speech,
                 stepDistanceConverter: gaitCoordinator,
                 distanceMode: feedbackDistanceMode,
-                // 将当前步频推导出的视觉兜底等待时间注入反馈引擎，避免倒数入口依赖固定 0.55 秒
                 visualCountdownFallbackDelayProvider: { gaitCoordinator.visualCountdownFallbackDelay }
             )
-            // 保存反馈引擎，供后续感知结果和模式切换事件继续调用
             feedbackEngine = engine
             
             gaitCoordinator.onStepDetected = { [self] in
                 guard !showCalibration, !showGaitProfiler, !showSettings, isFeedbackActive else { return }
-                // 将确认步伐和最新感知结果交给反馈引擎推进同步倒数
                 engine.handleStep(with: perceptionPipeline.detections)
             }
         }
@@ -103,7 +85,6 @@ struct ContentView: View {
                 withAnimation(.easeOut(duration: 0.5)) {
                     isCameraReady = true
                 }
-                // 摄像头就绪后播报提示
                 speech.speakInterrupting("Ready. Point your camera and tap Start.")
             }
         }
@@ -121,7 +102,6 @@ struct ContentView: View {
                     speech.stop()
                 }
         }
-        // 步态分析页面（学习个性化波峰阈值）
         .sheet(isPresented: $showGaitProfiler) {
             GaitProfilerView(gaitProfiler: gaitCoordinator.gaitProfiler)
                 .onAppear {
@@ -138,7 +118,6 @@ struct ContentView: View {
                         showCalibration = true
                     }
                 },
-                // 步态分析：关闭设置页后打开 GaitProfilerView
                 onProfileRequested: {
                     showSettings = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
@@ -150,12 +129,8 @@ struct ContentView: View {
                 speech.stop()
             }
         }
-        // =================================================================
-        // 覆盖层：加载中 → 开始按钮 → 导航界面
-        // =================================================================
         .overlay {
             if !isCameraReady {
-                // ── 阶段 1：加载动画 ──
                 ZStack {
                     Color.black.ignoresSafeArea()
                     VStack(spacing: 24) {
@@ -169,21 +144,15 @@ struct ContentView: View {
                 }
                 .transition(.opacity)
             } else if !isNavigationStarted {
-                // ── 阶段 2：摄像头就绪，等待用户点击开始 ──
                 startOverlay
                     .transition(.opacity)
             } else if isPaused {
-                // ── 阶段 3：导航暂停中 ──
                 pauseOverlay
                     .transition(.opacity)
             }
         }
         .preferredColorScheme(.dark)
     }
-    
-    // =====================================================================
-    // 开始按钮覆盖层
-    // =====================================================================
     
     private var startOverlay: some View {
         VStack {
@@ -207,7 +176,6 @@ struct ContentView: View {
                 navigationActionButton(icon: "location.fill", text: "Start")
             }
             
-            // 占位：与 Pause / Resume 页的 Settings 按钮等高，保持主按钮位置一致
             settingsButton
                 .hidden()
                 .padding(.top, 16)
@@ -216,10 +184,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.opacity(0.3).ignoresSafeArea())
     }
-    
-    // =====================================================================
-    // 暂停覆盖层
-    // =====================================================================
     
     private var pauseOverlay: some View {
         VStack {
@@ -251,10 +215,6 @@ struct ContentView: View {
         .background(Color.black.opacity(0.3).ignoresSafeArea())
     }
     
-    // =====================================================================
-    // 通用导航操作按钮（Start / Pause / Resume 复用）
-    // =====================================================================
-    
     private func navigationActionButton(icon: String, text: String, color: Color = Theme.safe, textColor: Color = .black) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
@@ -268,10 +228,6 @@ struct ContentView: View {
         .background(color)
         .clipShape(Capsule())
     }
-    
-    // =====================================================================
-    // 通用设置按钮（Pause / Resume 页复用）
-    // =====================================================================
     
     private var settingsButton: some View {
         Button(action: { showSettings = true }) {
@@ -293,14 +249,9 @@ struct ContentView: View {
         }
     }
     
-    // =====================================================================
-    // 顶部工具栏
-    // =====================================================================
-    
     private var topBar: some View {
         HStack(spacing: 12) {
             
-            // 步长指示器（仅展示，通过设置页标定）
             hudCapsule {
                 HStack(spacing: 6) {
                     if gaitCoordinator.isDynamicActive {
@@ -320,14 +271,9 @@ struct ContentView: View {
         .padding(.top, 8)
     }
     
-    // =====================================================================
-    // 底部状态面板
-    // =====================================================================
-    
     private func bottomPanel(bottomInset: CGFloat) -> some View {
         VStack(spacing: 10) {
             
-            // 当前反馈模式指示
             HStack(spacing: 6) {
                 Image(systemName: feedbackDistanceMode == .steps ? "figure.walk" : "ruler")
                     .font(.system(size: 14))
@@ -337,7 +283,6 @@ struct ContentView: View {
                     .foregroundColor(Theme.textPrimary)
             }
             
-            // 状态信息栏
             HStack(spacing: 16) {
                 HStack(spacing: 5) {
                     Image(systemName: "eye.fill")
@@ -373,10 +318,6 @@ struct ContentView: View {
         )
     }
     
-    // =====================================================================
-    // 通用 HUD 胶囊样式（顶部工具栏复用）
-    // =====================================================================
-    
     private func hudCapsule<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
             .padding(.horizontal, 14)
@@ -388,10 +329,6 @@ struct ContentView: View {
                     .stroke(Theme.border, lineWidth: 1)
             )
     }
-    
-    // =====================================================================
-    // 步长标签
-    // =====================================================================
     
     private var stepLengthLabel: String {
         let value = String(format: "%.2f", gaitCoordinator.effectiveStepLength)
