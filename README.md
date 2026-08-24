@@ -14,23 +14,23 @@ GaitNav uses YOLOv8s object detection, LiDAR distance estimation, and adaptive g
 
 ```text
 GaitNav/
-|-- GaitNav/
-|   |-- App/                 
-|   |-- Core/                # Perception, gait, and feedback coordinators
-|   |-- Perception/          # Object detection, distance estimation, and tracking
-|   |-- Gait/                # Step detection, profiling, calibration, and step length
-|   |-- Feedback/            # Speech feedback, countdown, and feedback policies
-|   |-- UI/                  # Camera preview, overlays, settings, and setup screens
-|   |-- Design/              
-|   `-- Resources/           # App assets and YOLOv8s CoreML model
-|-- Evaluation/              # Experiment data and analysis scripts
-|   |-- ObjectDetectionAccuracy/
-|   |-- DistanceEstimationAccuracy/
-|   |-- NavigationStoppingAccuracy/
-|   |-- FeedbackModeComparison/
-|   `-- RealTimePerformance/
-|-- GaitNav.xcodeproj/
-`-- README.md
+├── GaitNav/
+│   ├── App/                 
+│   ├── Core/                # Perception, gait, and feedback coordinators
+│   ├── Perception/          # Object detection, distance estimation, and tracking
+│   ├── Gait/                # Step detection, profiling, calibration, and step length
+│   ├── Feedback/            # Speech feedback, countdown, and feedback policies
+│   ├── UI/                  # Camera preview, overlays, settings, and setup screens
+│   ├── Design/              
+│   └── Resources/           # App assets and YOLOv8s CoreML model
+├── Evaluation/              # Experiment data and analysis scripts
+│   ├── ObjectDetectionAccuracy/
+│   ├── DistanceEstimationAccuracy/
+│   ├── NavigationStoppingAccuracy/
+│   ├── FeedbackModeComparison/
+│   └── RealTimePerformance/
+├── GaitNav.xcodeproj/
+└── README.md
 ```
 
 ## Evaluation
