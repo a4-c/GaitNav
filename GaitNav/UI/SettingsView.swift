@@ -1,34 +1,24 @@
 import SwiftUI
 
-// 设置页面
-//
-// 功能：
-//   1. 反馈模式切换（Steps / Meters）
-//   2. 步长信息展示 + 重新标定入口
-//   3. 关于信息
-//
-// 以 sheet 的形式从底部滑上来，与标定页面保持一致的交互方式
+// settings screen: feedback mode, gait profiling, step-length calibration, about
 struct SettingsView: View {
     
     @Binding var feedbackDistanceMode: FeedbackDistanceMode
     @ObservedObject var gaitCoordinator: GaitCoordinator
     @Environment(\.dismiss) var dismiss
     
-    // 请求打开标定页面的回调
     var onCalibrateRequested: () -> Void
     
-    // 请求打开步态分析页面的回调
     var onProfileRequested: () -> Void
     
     var body: some View {
         ZStack {
-            // 全屏深色背景
+            
             Theme.backgroundPrimary
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
                 
-                // 顶部拖拽指示条 + 标题
                 VStack(spacing: 16) {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Theme.textDisabled)
@@ -57,36 +47,22 @@ struct SettingsView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         
-                        // =================================================
-                        // 第一组：反馈模式
-                        // =================================================
-                        
                         settingsSection(title: "Feedback Mode") {
                             VStack(spacing: 14) {
-                                // 模式说明
                                 Text("Choose how obstacle distances are communicated through voice feedback.")
                                     .font(.system(size: 13))
                                     .foregroundColor(Theme.textSecondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .lineSpacing(2)
-                                
-                                // 模式选择卡片
                                 ForEach(FeedbackDistanceMode.allCases) { mode in
                                     modeCard(mode: mode)
                                 }
                             }
                         }
                         
-                        // =================================================
-                        // 第二组：步态检测（GaitProfiler）
-                        // =================================================
-                        
                         settingsSection(title: "Gait Detection") {
                             VStack(spacing: 14) {
-                                // 当前参数展示（阈值 + 步间隔并排）
-                                // 从 EMA 值转换为用户可理解的阈值和步间隔
                                 HStack(spacing: 12) {
-                                    // 波峰阈值：TH_HIGH = 1.0 + peakDevEma × 0.7
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("Peak Threshold")
                                             .font(.system(size: 11))
@@ -103,12 +79,10 @@ struct SettingsView: View {
                                         }
                                     }
                                     
-                                    // 分隔竖线
                                     Rectangle()
                                         .fill(Theme.divider)
                                         .frame(width: 1, height: 36)
                                     
-                                    // 最小步间隔：intervalEma × 0.7
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("Min Interval")
                                             .font(.system(size: 11))
@@ -127,20 +101,17 @@ struct SettingsView: View {
                                     
                                     Spacer()
                                     
-                                    // 来源标签（Profiled / Default）
                                     gaitSourceBadge
                                 }
                                 .padding(16)
                                 .background(Theme.backgroundElevated)
                                 .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                                 
-                                // 说明文字
                                 Text("These parameters adapt to your gait in real time. Profiling pre-calibrates them for immediate accuracy.")
                                     .font(.system(size: 12))
                                     .foregroundColor(Theme.textDisabled)
                                     .lineSpacing(2)
                                 
-                                // 步态分析按钮
                                 Button(action: onProfileRequested) {
                                     HStack(spacing: 8) {
                                         Image(systemName: "waveform.path.ecg")
@@ -163,13 +134,8 @@ struct SettingsView: View {
                             }
                         }
                         
-                        // =================================================
-                        // 第三组：步长
-                        // =================================================
-                        
                         settingsSection(title: "Step Length") {
                             VStack(spacing: 14) {
-                                // 当前步长展示
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("Current Step Length")
@@ -189,20 +155,18 @@ struct SettingsView: View {
                                     
                                     Spacer()
                                     
-                                    // 来源标签
                                     stepSourceBadge
                                 }
                                 .padding(16)
                                 .background(Theme.backgroundElevated)
                                 .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                                 
-                                // 三级优先级说明
                                 VStack(spacing: 8) {
                                     priorityRow(
                                         icon: "bolt.fill",
                                         color: Theme.safe,
                                         title: "Dynamic",
-                                        desc: "Real-time refinement after calibration", // 明确说明动态步长只会在完成标定后启用
+                                        desc: "Real-time refinement after calibration",
                                         isActive: gaitCoordinator.stepLengthSource == .dynamic
                                     )
                                     
@@ -220,12 +184,11 @@ struct SettingsView: View {
                                         icon: "ruler",
                                         color: Theme.textDisabled,
                                         title: "Default",
-                                        desc: "0.65 m/step (fixed baseline)", // 明确说明未标定状态会全程固定使用默认步长
+                                        desc: "0.65 m/step (fixed baseline)",
                                         isActive: gaitCoordinator.stepLengthSource == .defaultValue
                                     )
                                 }
                                 
-                                // 重新标定按钮
                                 Button(action: onCalibrateRequested) {
                                     HStack(spacing: 8) {
                                         Image(systemName: "arrow.triangle.2.circlepath")
@@ -246,8 +209,6 @@ struct SettingsView: View {
                                     )
                                 }
                                 
-                                // 清空标定步长按钮：只删除步长标定结果，不影响步态分析参数或其他实验设置
-                                // 点击按钮后立即执行清空操作，让设置页直接回退到未标定状态
                                 Button(action: {
                                     gaitCoordinator.clearCalibratedStepLength()
                                 }) {
@@ -272,10 +233,6 @@ struct SettingsView: View {
                             }
                         }
                         
-                        // =================================================
-                        // 第三组：关于
-                        // =================================================
-                        
                         settingsSection(title: "About") {
                             VStack(spacing: 12) {
                                 aboutRow(title: "Version", value: "1.0.0")
@@ -295,10 +252,6 @@ struct SettingsView: View {
             }
         }
     }
-    
-    // =====================================================================
-    // 通用分组容器
-    // =====================================================================
     
     private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -321,16 +274,11 @@ struct SettingsView: View {
         }
     }
     
-    // =====================================================================
-    // 反馈模式选择卡片
-    // =====================================================================
-    
     private func modeCard(mode: FeedbackDistanceMode) -> some View {
         let isSelected = feedbackDistanceMode == mode
         
         return Button(action: { feedbackDistanceMode = mode }) {
             HStack(spacing: 14) {
-                // 模式图标
                 Image(systemName: mode == .steps ? "shoeprints.fill" : "ruler")
                     .font(.system(size: 18))
                     .foregroundColor(isSelected ? Theme.accent : Theme.textDisabled)
@@ -342,7 +290,6 @@ struct SettingsView: View {
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 
-                // 模式描述
                 VStack(alignment: .leading, spacing: 2) {
                     Text(mode.label)
                         .font(.system(size: 15, weight: .semibold))
@@ -356,7 +303,6 @@ struct SettingsView: View {
                 
                 Spacer()
                 
-                // 选中标记
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22))
                     .foregroundColor(isSelected ? Theme.accent : Theme.textDisabled.opacity(0.5))
@@ -388,10 +334,6 @@ struct SettingsView: View {
         }
     }
     
-    // =====================================================================
-    // 步长来源徽章
-    // =====================================================================
-    
     private var stepSourceBadge: some View {
         let (text, color): (String, Color) = {
             switch gaitCoordinator.stepLengthSource {
@@ -412,10 +354,6 @@ struct SettingsView: View {
             .tracking(0.5)
     }
     
-    // =====================================================================
-    // 步态检测来源徽章（Profiled / Default）
-    // =====================================================================
-    
     private var gaitSourceBadge: some View {
         let (text, color): (String, Color) = {
             if gaitCoordinator.hasEverProfiled {
@@ -435,10 +373,6 @@ struct SettingsView: View {
             .textCase(.uppercase)
             .tracking(0.5)
     }
-    
-    // =====================================================================
-    // 三级优先级指示行
-    // =====================================================================
     
     private func priorityRow(icon: String, color: Color, title: String, desc: String, isActive: Bool) -> some View {
         HStack(spacing: 10) {
@@ -469,10 +403,6 @@ struct SettingsView: View {
         .background(isActive ? color.opacity(0.05) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
-    
-    // =====================================================================
-    // 关于信息行
-    // =====================================================================
     
     private func aboutRow(title: String, value: String) -> some View {
         HStack {
