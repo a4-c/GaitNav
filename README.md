@@ -66,3 +66,13 @@ python3 analyse_object_detection.py
 ```
 
 Each script assumes that its input CSV files are located in the same folder as the script.
+
+## License
+
+Copyright (C) 2026 Lok Yiu Ching.
+
+This project is licensed under the GNU Affero General Public License v3.0.
+
+### Third-Party Model
+
+This repository includes an Ultralytics YOLOv8s model trained on COCO and converted to Core ML format. Ultralytics YOLO is licensed under the GNU Affero General Public License v3.0.
